@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added support for Qwen3 models.
+
+### Changed
+
+- Upgraded to beaker-py v2.
+
+## [v2.4.0](https://github.com/allenai/OLMo-core/releases/tag/v2.4.0) - 2025-11-20
+
+### Added
+
 - Added option to skip ranges of steps in the trainer.
 - Send a Slack notification when a Beaker job appears to be stuck.
 - Added `ignore_fingerprint_mismatch` parameter to `NumpyDataLoaderConfig` to allow resuming training from a checkpoint with a different dataset mix.
