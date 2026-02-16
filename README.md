@@ -99,7 +99,11 @@ response = bolmo.generate(input_ids, max_new_tokens=256, do_sample=True, tempera
 print(tokenizer.decode(response[0], skip_special_tokens=True))
 ```
 
-This should quickly generate a completion on a standard GPU (usually <5min, including downloading the weights from the internet).
+This should quickly generate a completion on a standard GPU (usually <5min, including downloading the weights from the internet). It should generate something like:
+
+```
+Language modeling is a fundamental task in natural language processing (NLP), aiming to predict the probability of a sequence of words occurring in a given context. This prediction is crucial for various applications, including speech recognition, machine translation, and text generation. [...]
+```
 
 ### HuggingFace checkpoints vs. olmo-core checkpoints
 
