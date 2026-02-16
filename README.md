@@ -48,12 +48,24 @@ Training data is available via HuggingFace at [allenai/bolmo_mix](https://huggin
 
 First install [PyTorch](https://pytorch.org) according to the instructions specific to your operating system and hardware.
 
-### From Source (Recommended for Development)
+#### Using UV (Recommended)
 
 ```bash
 git clone https://github.com/allenai/bolmo-core.git
 cd bolmo-core
-pip install -e .[all]
+uv venv --python 3.12.12
+. .venv/bin/activate
+uv sync --frozen --extra xlstm --extra wandb
+```
+
+This will install the precise version used for development of all packages (as saved in `uv.lock`). Installation should typically take less than five minutes.
+
+#### Using pip
+
+Alternatively, via pip:
+
+```
+pip install -e .[xlstm,wandb]
 ```
 
 ### Optional Dependencies
@@ -66,7 +78,9 @@ For full functionality, you may need:
 
 See the [OLMo-core documentation](https://olmo-core.readthedocs.io/) for complete installation details.
 
-## Quick Start
+We tested Bolmo installation on Ubuntu 24.04 and Rocky Linux release 8.10.
+
+## Demo
 
 ### Inference with HuggingFace
 
@@ -80,10 +94,12 @@ tokenizer = AutoTokenizer.from_pretrained("allenai/Bolmo-7B", trust_remote_code=
 message = ["Language modeling is "]
 input_ids = tokenizer(message, return_tensors="pt")["input_ids"].to(device)
 
-# `max_new_tokens` is the amuont of bytes to generate
+# `max_new_tokens` is the amount of bytes to generate
 response = bolmo.generate(input_ids, max_new_tokens=256, do_sample=True, temperature=0.1)
 print(tokenizer.decode(response[0], skip_special_tokens=True))
 ```
+
+This should quickly generate a completion on a standard GPU (usually <5min, including downloading the weights from the internet).
 
 ### HuggingFace checkpoints vs. olmo-core checkpoints
 
@@ -107,8 +123,12 @@ Bolmo training uses a two-stage byteifying procedure to convert existing subword
 ### Stage 1: Subword-to-Byte Distillation
 Quickly learn weights for local models while freezing the global model (9.8B tokens ≈ 43B bytes). Training scripts for this stage are available at `bolmo_scripts/launch_stage1_*`.
 
+To run the Stage 1 training script, first prepare your training data (for example, the [bolmo_mix](https://huggingface.co/datasets/allenai/bolmo_mix) dataset) via the [Dolma toolkit](https://github.com/allenai/dolma), see [here](https://github.com/allenai/dolma/blob/main/docs/getting-started.md#step-4-tokenize-the-dataset) for details.
+
 ### Stage 2: End-to-End Training
 Train the entire model to utilize byte-level information (39.3B tokens ≈ 173B bytes).  Training scripts for this stage are available at `bolmo_scripts/launch_stage2_*`.
+
+To run the Stage 1 training script, first prepare your training data (for example, the [bolmo_mix](https://huggingface.co/datasets/allenai/bolmo_mix) dataset) via the [Dolma toolkit](https://github.com/allenai/dolma), see [here](https://github.com/allenai/dolma/blob/main/docs/getting-started.md#step-4-tokenize-the-dataset) for details.
 
 ## Post-Training via Task Arithmetic
 Existing post-trained checkpoints can be byteified without additional training using Task Arithmetic:
@@ -123,7 +143,7 @@ python3 src/examples/bolmo/instructify.py \
 ```
 
 
-## Performance
+## Evaluation
 
 ### Bolmo 7B Results
 
@@ -140,6 +160,32 @@ Bolmo 7B matches or exceeds the performance of state-of-the-art byte-level model
 | GenQA | 70.9 | 72.4 | 68.4 |
 
 Full evaluation results available in the paper.
+
+### Reproducing Evaluations
+
+We use [olmes](https://github.com/allenai/olmes) for all evaluations.
+
+You can evaluate Bolmo like any subword LLM, except for one Gotcha: for loglikelihood evals, we need to fold the boundary + byte logits (second half of the vocabulary) into the byte logits (first half of the vocabulary):
+
+```python
+probs = F.softmax(logits.float(), dim=-1)
+probs[..., :self.vocab_size_bolmo] += probs[..., self.vocab_size_bolmo:self.vocab_size_bolmo*2]
+logits = torch.log(probs)
+logits[..., self.vocab_size_bolmo:self.vocab_size_bolmo*2] = -100_000
+```
+
+The fork of OLMES at http://github.com/bminixhofer/olmes implements this option. You can evaluate Bolmo like this for example:
+
+```
+olmes \
+    --model allenai/Bolmo-1B \
+    --model-args '{"max_length": 16384, "trust_remote_code": "true", "model_type": "hf_bolmo", "add_bos_token": "true"}' \
+    --task bolmo1b \
+    --batch-size 32 \
+    --output-dir workspace
+```
+
+This will reproduce the evals for Bolmo 1B. See also [#6](https://github.com/allenai/bolmo-core/issues/6). The olmes task suites for Bolmo 1B and Bolmo 7B are defined here: [link](https://github.com/bminixhofer/olmes/blob/5fe45c51eeb7c867a6351926b7c470d622796ccc/oe_eval/configs/task_suites.py#L980-L1051).
 
 ## Citation
 
