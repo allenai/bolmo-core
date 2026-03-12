@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Optional
 from transformers import AutoTokenizer
-import numpy as np
+import os
 from functools import lru_cache
 
 from ..config import Config, StrEnum
@@ -275,7 +275,13 @@ class ByteTokenizer:
 
     def __init__(self, tokenizer_config: ByteTokenizerConfig):
         self.config = tokenizer_config
-        self.hf_tokenizer = AutoTokenizer.from_pretrained(tokenizer_config.original_identifier)
+
+        original_identifier = tokenizer_config.original_identifier
+        load_kwargs: dict = {}
+        if original_identifier and os.path.exists(original_identifier):
+            load_kwargs["local_files_only"] = True
+
+        self.hf_tokenizer = AutoTokenizer.from_pretrained(original_identifier, **load_kwargs)
         if self.config.special_tokens_first:
             self.offset = len(tokenizer_config.special_tokens)
             self.special_tokens_offset = 0

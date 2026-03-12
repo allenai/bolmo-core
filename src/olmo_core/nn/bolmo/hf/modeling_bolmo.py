@@ -319,10 +319,8 @@ class BolmoBoundaryPredictor(nn.Module):
 
 class BolmoXLSTMLayer(mLSTMLayer):
     def __init__(self, config: BolmoConfig):
-        super().__init__(mLSTMLayerConfig(
-            embedding_dim=config.hidden_size,
-            num_heads=config.num_local_heads,
-            mlstm_backend=mLSTMBackendConfig(
+        if torch.cuda.is_available():
+            backend = mLSTMBackendConfig(
                 chunkwise_kernel="chunkwise--triton_limit_chunk",
                 sequence_kernel="native_sequence__triton",
                 step_kernel="triton",
@@ -330,6 +328,19 @@ class BolmoXLSTMLayer(mLSTMLayer):
                 return_last_states=True,
                 autocast_kernel_dtype="float32",
             )
+        else:
+            backend = mLSTMBackendConfig(
+                chunkwise_kernel="chunkwise--native_autograd",
+                sequence_kernel="native_sequence__native",
+                step_kernel="native",
+                mode="train",
+                return_last_states=True,
+                autocast_kernel_dtype="float32",
+            )
+        super().__init__(mLSTMLayerConfig(
+            embedding_dim=config.hidden_size,
+            num_heads=config.num_local_heads,
+            mlstm_backend=backend,
         ))
 
     # original forward adapted to support sequence_start_indices

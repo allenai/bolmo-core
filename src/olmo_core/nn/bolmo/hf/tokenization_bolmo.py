@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from functools import lru_cache
+import os
 from typing import Optional, Union
 from transformers import AutoTokenizer
 from transformers.tokenization_utils import PreTrainedTokenizer
@@ -94,7 +95,12 @@ class BolmoTokenizer(PreTrainedTokenizer):
         tokenizer_config = kwargs.pop("tokenizer_config", BolmoTokenizerConfig.bolmo())
 
         self.config = tokenizer_config
-        self.hf_tokenizer = AutoTokenizer.from_pretrained(tokenizer_config.original_identifier)
+        original_identifier = tokenizer_config.original_identifier
+        load_kwargs: dict = {}
+        if original_identifier and os.path.exists(original_identifier):
+            load_kwargs["local_files_only"] = True
+
+        self.hf_tokenizer = AutoTokenizer.from_pretrained(original_identifier, **load_kwargs)
         if self.config.special_tokens_first:
             self.offset = len(tokenizer_config.special_tokens)
             self.special_tokens_offset = 0
