@@ -182,10 +182,10 @@ class BolmoTokenizer(PreTrainedTokenizer):
 
         if token in [x + "b" for x in self.config.special_tokens]:
             # special token with fused boundary
-            return 256 + self.config.special_tokens.index(token[:-1])
+            return self.offset + 256 + self.config.special_tokens.index(token[:-1])
 
         if len(token) > 1 and token[-1] == "b":
-            return self.offset + 256 + _CHARS_TO_BYTES[token[0]]
+            return self.offset + 256 + self.offset + _CHARS_TO_BYTES[token[0]]
         else:
             return self.offset + _CHARS_TO_BYTES[token]
 
