@@ -2,7 +2,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
-import fla.layers
 import torch
 from torch import nn
 
@@ -12,9 +11,11 @@ log = logging.getLogger(__name__)
 
 
 class FLA(nn.Module):
-    def __init__(self, inner: fla.layers.ABCAttention):
+    def __init__(self, inner):
+        import fla.layers
+
         super().__init__()
-        self.inner = inner
+        self.inner: fla.layers.ABCAttention = inner
 
         self.kv_cache_manager = None
 

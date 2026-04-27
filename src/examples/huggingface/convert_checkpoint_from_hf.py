@@ -67,6 +67,12 @@ def _get_transformer_config(model_arch: str, vocab_size: int) -> TransformerConf
         "llama3_8b": TransformerConfig.llama3_8B,
         "llama3_70b": TransformerConfig.llama3_70B,
         "llama3_405b": TransformerConfig.llama3_405B,
+        "qwen3_0_6b": TransformerConfig.qwen3_0_6B,
+        "qwen3_1_7b": TransformerConfig.qwen3_1_7B,
+        "qwen3_4b": TransformerConfig.qwen3_4B,
+        "qwen3_8b": TransformerConfig.qwen3_8B,
+        "qwen3_14b": TransformerConfig.qwen3_14B,
+        "qwen3_32b": TransformerConfig.qwen3_32B,
     }
 
     return transformer_configs[model_arch.lower()](vocab_size)
@@ -77,6 +83,7 @@ def _get_tokenizer_config(tokenizer_id: str) -> TokenizerConfig:
         "dolma2": TokenizerConfig.dolma2,
         "gpt_neox_olmo_dolma_v1_5": TokenizerConfig.gpt_neox_olmo_dolma_v1_5,
         "gpt2": TokenizerConfig.gpt2,
+        "qwen3": TokenizerConfig.qwen3,
     }
 
     return tokenizer_configs[tokenizer_id.lower()]()
@@ -357,7 +364,7 @@ def validate_conversion(
         AutoModelForCausalLM.from_pretrained(
             hf_path,
             revision=hf_revision,
-            torch_dtype="auto",
+            torch_dtype=torch.float32,
             config=hf_config,
             attn_implementation="sdpa",
         )
@@ -380,8 +387,7 @@ def validate_conversion(
         for block in model.blocks.values():
             if block.attention.window_size != (-1, -1):
                 block.attention.window_size = (sliding_window - 1, 0)
-    dtype = getattr(hf_config, "torch_dtype", torch.float32)
-    model = model.to(device=device, dtype=dtype)
+    model = model.to(device=device, dtype=torch.float32)
     model.eval()
     with torch.no_grad():
         logits = model(input_ids=input_ids)

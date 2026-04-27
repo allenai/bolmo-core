@@ -406,8 +406,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             "wandb",
             WandBCallback(
                 name=run_name,
-                project="benjaminm-tok",
-                entity="ai2-llm",
+                project="bolmo",
+                entity="bminixhofer",
                 cancel_check_interval=10,
                 enabled=True,  # change to true to enable
             ),
