@@ -6,6 +6,7 @@ Launch this with torchrun:
     torchrun --nproc-per-node=4 src/examples/llama/train.py run_name [OVERRIDES...]
 """
 
+import dataclasses
 import logging
 import os
 import sys
@@ -112,6 +113,15 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     byte_tokenizer_config = ByteTokenizerConfig.blt()
     subword_tokenizer_config = TokenizerConfig.dolma2()
 
+    original_model_kind = None  # default olmo
+    if OLMO_ARCH.startswith("qwen3"):
+        subword_tokenizer_config = TokenizerConfig.qwen3()
+        byte_tokenizer_config = dataclasses.replace(
+            byte_tokenizer_config,
+            original_identifier=subword_tokenizer_config.identifier,
+        )
+        original_model_kind = "qwen3"
+    
     if QUICK_DEBUG:
         NUM_WORKERS = 0
         GLOBAL_BATCH_SIZE = 4
@@ -132,8 +142,12 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             local_d_model = 4096
         elif OLMO_ARCH == "olmo3_7B":
             local_d_model = 4096
+        elif OLMO_ARCH == "qwen3_0_6B":
+            local_d_model = 1024
+        elif OLMO_ARCH == "qwen3_8B":
+            local_d_model = 4096
         else:
-            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B'.")
+            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B', 'qwen3_0_6B', 'qwen3_8B'.")
 
         local_encoder_n_layers = 1
         local_decoder_n_layers = 9
@@ -155,8 +169,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             n_layers=local_encoder_n_layers,
             cross_attn_n_heads=local_cross_attn_n_heads,
             block_config=local_block,
+            original_model_kind=original_model_kind,
             boundary_predictor="dtp",
             add_out_projection=False,
+            subword_vocab_size=subword_tokenizer_config.padded_vocab_size(),
         )
         local_decoder = LocalDecoderConfig(
             sliding_window_size=512,
@@ -164,6 +180,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             n_layers=local_decoder_n_layers,
             cross_attn_n_heads=local_cross_attn_n_heads,
             block_config=local_block,
+            original_model_kind=original_model_kind,
         )
     elif LOCAL_MODEL_STYLE.startswith("hnet"):
         if OLMO_ARCH == "olmo2_1B_v2":
@@ -172,8 +189,12 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             local_d_model = 4096
         elif OLMO_ARCH == "olmo3_7B":
             local_d_model = 4096
+        elif OLMO_ARCH == "qwen3_0_6B":
+            local_d_model = 1024
+        elif OLMO_ARCH == "qwen3_8B":
+            local_d_model = 4096
         else:
-            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B'.")
+            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B', 'qwen3_0_6B', 'qwen3_8B'.")
 
         local_encoder_n_layers = 4
         local_decoder_n_layers = 4
@@ -227,10 +248,12 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             sliding_window_size=0,
             cross_attn_n_heads=0,
             block_config=local_encoder_block,
+            original_model_kind=original_model_kind,
             add_norm_after_last_block=True,
             boundary_predictor="hnet",
             add_out_projection=True,
             pooling="hnet",
+            subword_vocab_size=subword_tokenizer_config.padded_vocab_size(),
         )
         local_decoder = LocalDecoderConfig(
             d_model=local_d_model,
@@ -242,6 +265,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             add_norm_onto_residual=False,
             add_in_projection=True,
             depooling="hnet",
+            original_model_kind=original_model_kind,
         )
     else:
         raise ValueError(f"Unknown LOCAL_MODEL_STYLE: {LOCAL_MODEL_STYLE}. Must be one of 'blt', 'hnet'.")

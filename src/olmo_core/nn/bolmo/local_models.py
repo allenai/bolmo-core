@@ -299,7 +299,7 @@ class LocalEncoder(nn.Module):
             boundary_predictor_lookahead: int = 1,
             represent_bytes_with_embeddings: bool = False,
             represent_bytes_with_last_mixed_out: bool = False,
-            subword_vocab_size: Optional[int] = 100278, # dolma2 tokenizer specific!
+            subword_vocab_size: Optional[int] = None,
             blt_k: Optional[int] = None,
             blt_compat: bool = False,  # for compat with BLT checkpoints
             cache_n_last_tokens: int = 256,

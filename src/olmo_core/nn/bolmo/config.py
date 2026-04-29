@@ -29,7 +29,7 @@ class BolmoConfig(Config):
     encoder_loss_lookahead: int = 0
     encoder_loss_no_lookahead_weight: float = 1.0
     encoder_loss_lookahead_weights: list[float] = field(default_factory=lambda: [])
-    patching: str = "dolma2"
+    patching: str = "original"
     epsilon: float = 1e-6
     skip_blocks: bool = False
     skip_teacher_blocks: bool = False
@@ -72,6 +72,8 @@ class LocalEncoderConfig(Config):
     boundary_predictor_lookahead: int = 1
     represent_bytes_with_embeddings: bool = False
     represent_bytes_with_last_mixed_out: bool = False
+    subword_vocab_size: Optional[int] = None
+    original_model_kind: str | None = None
     blt_k: Optional[int] = None  # used in blt
     blt_compat: bool = False # for compat with BLT checkpoints
     dtype: DType = DType.float32
@@ -102,6 +104,7 @@ class LocalEncoderConfig(Config):
             boundary_predictor_lookahead=self.boundary_predictor_lookahead,
             represent_bytes_with_embeddings=self.represent_bytes_with_embeddings,
             represent_bytes_with_last_mixed_out=self.represent_bytes_with_last_mixed_out,
+            subword_vocab_size=self.subword_vocab_size,
             blt_k=self.blt_k,
             blt_compat=self.blt_compat,
             dtype=self.dtype.as_pt(),
@@ -123,6 +126,7 @@ class LocalDecoderConfig(Config):
     hnet_smooth: bool = True
     hnet_smooth_ste: bool = False
     hnet_modulate: bool = True
+    original_model_kind: str | None = None
     blt_k: Optional[int] = None  # used in blt
     blt_compat: bool = False # for compat with BLT checkpoints
     fuse_boundaries: bool = True

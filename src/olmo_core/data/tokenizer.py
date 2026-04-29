@@ -40,7 +40,7 @@ class TokenizerName(StrEnum):
     The base GPT2 tokenizer.
     """
 
-    qwen3 = "qwen3"
+    qwen3 = "Qwen/Qwen3-8B"
     """
     The qwen3 tokenizer.
     """

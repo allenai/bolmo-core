@@ -1156,9 +1156,21 @@ class BolmoTransformer(Transformer):
         self.local_encoder = local_encoder.build(vocab_size, d_global_model=d_model)
         self.local_decoder = local_decoder.build(vocab_size, d_global_model=d_model)
 
-         # TODO(benjaminm): generalize
-        self.space_mask_dolma2 = bolmo_utils.get_dolma2_space_mask()
-        self.eos_token_dolma2 = 100257
+        if local_encoder.original_model_kind is not None:
+            assert local_decoder.original_model_kind == local_encoder.original_model_kind, (
+                "local_encoder and local_decoder must be based on the same original model kind"
+            )
+            original_model_kind = local_encoder.original_model_kind
+            if original_model_kind == "qwen3":
+                self.space_mask_original = bolmo_utils.get_qwen3_space_mask()
+                self.eos_token_original = 198 # use Ċ (corresponding to \n) as BOS token for Qwen3
+            else:
+                raise NotImplementedError(f"Unsupported original model kind: {original_model_kind}")
+        else:
+            # assume OLMo
+            self.space_mask_original = bolmo_utils.get_dolma2_space_mask()
+            self.eos_token_original = 100257
+
         self.space_mask_bolmo = bolmo_utils.get_bolmo_space_mask()
         self.end_of_subword_token_bolmo = 3
         self.eos_token_bolmo = 1
@@ -1319,8 +1331,8 @@ class BolmoTransformer(Transformer):
         if (teacher_inputs_embeds := kwargs.pop("teacher_inputs_embeds", None)) is not None:
             extra_kwargs["teacher_inputs_embeds"] = move_to_device(teacher_inputs_embeds, self.device)
 
-        if bolmo_config is not None and bolmo_config.patching != "dolma2":
-            # can't use attributes relying on dolma2 patching
+        if bolmo_config is not None and bolmo_config.patching != "original":
+            # can't use attributes relying on original patching
             extra_kwargs["original_input_ids"] = None
 
         return (
@@ -1760,16 +1772,16 @@ class BolmoDistillTransformer(BolmoTransformer):
                     (0, logprobs.shape[-1] - len(self.space_mask_bolmo)),
                     value=0
                 )[None, None, :]
-                space_mask_padded_dolma2 = F.pad(
-                    self.space_mask_dolma2.to(y_true.device),
-                    (0, teacher_logprobs.shape[-1] - len(self.space_mask_dolma2)),
+                space_mask_padded_original = F.pad(
+                    self.space_mask_original.to(y_true.device),
+                    (0, teacher_logprobs.shape[-1] - len(self.space_mask_original)),
                     value=0
                 )[None, None, :]
                 patch_end_indices = torch.cumsum(true_patch_lens, dim=1) - 1
                 minus_inf = torch.tensor(float('-inf'), device=logprobs.device)
                 y_space_hat_all = torch.where(space_mask_padded_bolmo.bool(), logprobs, minus_inf).logsumexp(dim=-1)  
                 y_space_hat = torch.gather(y_space_hat_all, dim=1, index=patch_end_indices[:, 1:])
-                y_space_true = torch.where(space_mask_padded_dolma2.bool(), teacher_logprobs[:, 1:], minus_inf).logsumexp(dim=-1)
+                y_space_true = torch.where(space_mask_padded_original.bool(), teacher_logprobs[:, 1:], minus_inf).logsumexp(dim=-1)
 
                 y_hat = y_hat + y_space_hat
                 y_true = y_true + y_space_true
@@ -2052,7 +2064,7 @@ class BolmoDistillTransformer(BolmoTransformer):
                     [
                         torch.full(
                             (extra_kwargs["original_input_ids"].shape[0], 1),
-                            fill_value=self.eos_token_dolma2,
+                            fill_value=self.eos_token_original,
                             dtype=extra_kwargs["original_input_ids"].dtype,
                             device=extra_kwargs["original_input_ids"].device
                         ),

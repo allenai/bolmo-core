@@ -223,7 +223,7 @@ class TransformerBolmoTrainModule(TransformerTrainModule):
                 "train/masked instances (%)", (~instance_mask).float().mean(), ReduceType.mean
             )
 
-        if self.bolmo_config.patching == "dolma2":
+        if self.bolmo_config.patching == "original":
             patch_lens = batch["patch_lens"]
         elif self.bolmo_config.patching == "space":
             patch_lens = batch["space_patch_lens"]

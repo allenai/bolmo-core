@@ -308,6 +308,16 @@ def get_dolma2_space_mask():
 
     return space_mask
 
+def get_qwen3_space_mask():
+    QWEN3_TOKENIZER = AutoTokenizer.from_pretrained("Qwen/Qwen3-8B")
+
+    space_mask = torch.zeros(len(QWEN3_TOKENIZER), dtype=torch.bool)
+    for token, token_id in QWEN3_TOKENIZER.get_vocab().items():
+        if token.startswith("Ġ") or token.startswith("Ċ") or token.startswith("ĉ"):
+            space_mask[token_id] = True
+    
+    return space_mask
+
 def get_bolmo_space_mask():
     offset = 4
 
