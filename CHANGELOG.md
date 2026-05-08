@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added support for Qwen3 models.
 
+### Fixed
+
+- Fixed Qwen3 implementation to match HuggingFace by applying RoPE in the input dtype (bf16) rather than upcasting to fp32.
+
 ### Changed
 
 - Upgraded to beaker-py v2.
