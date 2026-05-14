@@ -431,8 +431,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             "wandb",
             WandBCallback(
                 name=run_name,
-                project="bolmo",
-                entity="llms-transfer-learning",
+                project="benjaminm-tok",
+                entity="ai2-llm",
                 cancel_check_interval=10,
                 enabled=True,  # change to true to enable
             ),
