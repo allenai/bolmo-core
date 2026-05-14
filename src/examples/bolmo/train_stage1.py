@@ -173,7 +173,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             blt_k=2,
             boundary_predictor="dtp",
             add_out_projection=False,
-            subword_vocab_size=subword_tokenizer_config.vocab_size,
+            subword_vocab_size=subword_tokenizer_config.padded_vocab_size(),
         )
         local_decoder = LocalDecoderConfig(
             sliding_window_size=512,
@@ -267,7 +267,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             add_out_projection=True,
             pooling="hnet",
             original_model_kind=original_model_kind,
-            subword_vocab_size=subword_tokenizer_config.vocab_size,
+            subword_vocab_size=subword_tokenizer_config.padded_vocab_size(),
         )
         local_decoder = LocalDecoderConfig(
             d_model=local_d_model,
