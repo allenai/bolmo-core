@@ -432,7 +432,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             WandBCallback(
                 name=run_name,
                 project="bolmo",
-                entity="bminixhofer",
+                entity="llms-transfer-learning",
                 cancel_check_interval=10,
                 enabled=True,  # change to true to enable
             ),
