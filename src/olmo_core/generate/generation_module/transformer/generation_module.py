@@ -37,6 +37,7 @@ from olmo_core.generate.sampling import select_next_token
 from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.attention import Attention, AttentionBackendName
+from olmo_core.nn.attention.flash_attn_api import has_flash_attn_2, has_flash_attn_3
 from olmo_core.nn.bolmo.config import BolmoConfig
 from olmo_core.nn.bolmo import utils as bolmo_utils
 import olmo_core.nn.bolmo.utils as bolmo_utils
@@ -636,6 +637,26 @@ class TransformerGenerationModule(GenerationModule):
             dtype = DType(dtype)
             transformer_config.apply(
                 lambda c: setattr(c, "dtype", dtype) if hasattr(c, "dtype") else None
+            )
+
+        if attention_backend is None and generation_config.use_cache:
+            # The default torch SDPA backend doesn't support KV caching, so when generation
+            # will use the cache we auto-pick a flash-attn backend that does. Callers can
+            # still force `torch` by passing it explicitly.
+            if has_flash_attn_2():
+                attention_backend = AttentionBackendName.flash_2
+            elif has_flash_attn_3():
+                attention_backend = AttentionBackendName.flash_3
+            else:
+                raise OLMoConfigurationError(
+                    "Generation with use_cache=True requires a KV-cache-capable attention "
+                    "backend, but neither flash-attn 2 nor flash-attn 3 is available. "
+                    "Install flash-attn, pass an explicit attention_backend, or set "
+                    "generation_config.use_cache=False."
+                )
+            log_or_print(
+                log,
+                f"Auto-selected attention backend for KV caching: {attention_backend}",
             )
 
         if attention_backend is not None:
