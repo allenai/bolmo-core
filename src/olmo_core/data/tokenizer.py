@@ -317,8 +317,7 @@ class ByteTokenizer:
             load_kwargs["local_files_only"] = True
 
         self.hf_tokenizer = AutoTokenizer.from_pretrained(original_identifier, **load_kwargs)
-        if self.hf_tokenizer.pad_token_id is None:
-            self.hf_tokenizer.pad_token_id = self.config.pad_token_id
+        hf_has_pad = self.hf_tokenizer.pad_token_id is not None
         if self.config.special_tokens_first:
             self.offset = len(tokenizer_config.special_tokens)
             self.special_tokens_offset = 0
@@ -335,7 +334,7 @@ class ByteTokenizer:
                 byte_sequence = [self.eos_token_id]
             elif value == self.hf_tokenizer.bos_token_id and self.bos_token_id is not None:
                 byte_sequence = [self.bos_token_id]
-            elif value == self.hf_tokenizer.pad_token_id and self.pad_token_id is not None:
+            elif hf_has_pad and value == self.hf_tokenizer.pad_token_id and self.pad_token_id is not None:
                 byte_sequence = [self.pad_token_id]
             else:
                 byte_sequence = [self.offset + i for i in bolmo_utils.chars_to_bytes(key)]
