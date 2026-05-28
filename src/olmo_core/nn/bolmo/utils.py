@@ -318,6 +318,14 @@ def get_qwen3_space_mask():
     
     return space_mask
 
+def get_llama3_space_mask():
+    LLAMA3_TOKENIZER = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B")
+    space_mask = torch.zeros(len(LLAMA3_TOKENIZER), dtype=torch.bool)
+    for token, token_id in LLAMA3_TOKENIZER.get_vocab().items():
+        if token.startswith("Ġ") or token.startswith("Ċ") or token.startswith("ĉ"):
+            space_mask[token_id] = True
+    return space_mask
+
 def get_bolmo_space_mask():
     offset = 4
 

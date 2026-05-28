@@ -84,6 +84,7 @@ def _get_tokenizer_config(tokenizer_id: str) -> TokenizerConfig:
         "gpt_neox_olmo_dolma_v1_5": TokenizerConfig.gpt_neox_olmo_dolma_v1_5,
         "gpt2": TokenizerConfig.gpt2,
         "qwen3": TokenizerConfig.qwen3,
+        "llama3": TokenizerConfig.llama3,
     }
 
     return tokenizer_configs[tokenizer_id.lower()]()

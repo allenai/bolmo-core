@@ -1164,6 +1164,9 @@ class BolmoTransformer(Transformer):
             if original_model_kind == "qwen3":
                 self.space_mask_original = bolmo_utils.get_qwen3_space_mask()
                 self.eos_token_original = 198 # use Ċ (corresponding to \n) as BOS token for Qwen3
+            elif original_model_kind == "llama3":
+                self.space_mask_original = bolmo_utils.get_llama3_space_mask()
+                self.eos_token_original = 128000  # <|begin_of_text|>
             else:
                 raise NotImplementedError(f"Unsupported original model kind: {original_model_kind}")
         else:

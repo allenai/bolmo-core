@@ -121,6 +121,13 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             original_identifier=subword_tokenizer_config.identifier,
         )
         original_model_kind = "qwen3"
+    elif OLMO_ARCH.startswith("llama3"):
+        subword_tokenizer_config = TokenizerConfig.llama3()
+        byte_tokenizer_config = dataclasses.replace(
+            byte_tokenizer_config,
+            original_identifier=subword_tokenizer_config.identifier,
+        )
+        original_model_kind = "llama3"
     
     if QUICK_DEBUG:
         NUM_WORKERS = 0
@@ -146,8 +153,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             local_d_model = 1024
         elif OLMO_ARCH == "qwen3_8B":
             local_d_model = 4096
+        elif OLMO_ARCH == "llama3_8B":
+            local_d_model = 4096
         else:
-            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B', 'qwen3_0_6B', 'qwen3_8B'.")
+            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B', 'qwen3_0_6B', 'qwen3_8B', 'llama3_8B'.")
 
         local_encoder_n_layers = 1
         local_decoder_n_layers = 9
@@ -193,8 +202,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             local_d_model = 1024
         elif OLMO_ARCH == "qwen3_8B":
             local_d_model = 4096
+        elif OLMO_ARCH == "llama3_8B":
+            local_d_model = 4096
         else:
-            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B', 'qwen3_0_6B', 'qwen3_8B'.")
+            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B', 'qwen3_0_6B', 'qwen3_8B', 'llama3_8B'.")
 
         local_encoder_n_layers = 4
         local_decoder_n_layers = 4

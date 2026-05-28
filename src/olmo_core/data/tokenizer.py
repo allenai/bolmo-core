@@ -45,6 +45,11 @@ class TokenizerName(StrEnum):
     The qwen3 tokenizer.
     """
 
+    llama3 = "meta-llama/Meta-Llama-3-8B"
+    """
+    The llama3 tokenizer.
+    """
+
 
 @dataclass
 class TokenizerConfig(Config):
@@ -106,6 +111,19 @@ class TokenizerConfig(Config):
             eos_token_id=151645, # im_end
             pad_token_id=151643, # endoftext
             identifier=TokenizerName.qwen3,
+        )
+
+    @classmethod
+    def llama3(cls) -> "TokenizerConfig":
+        """
+        Get a :data:`~TokenizerName.llama3` tokenizer config.
+        """
+        return cls(
+            vocab_size=128256,
+            eos_token_id=128001,  # <|end_of_text|>
+            pad_token_id=128002, # no dedicated pad, so use first reserved
+            bos_token_id=128000,  # <|begin_of_text|>
+            identifier=TokenizerName.llama3,
         )
 
     @classmethod
