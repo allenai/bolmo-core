@@ -839,7 +839,7 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
 
         # manually remove fim middle ID and retokenize - not needed for byte level models since
         # no tokenization bias.
-        self.fim_middle_id = self.tokenizer.hf_tokenizer.get_vocab()["<|fim_middle|>"]
+        self.fim_middle_id = self.tokenizer.hf_tokenizer.get_vocab().get("<|fim_middle|>")
         self.compute_merge_kind = None
         self._entropy_path_replace = None
 
@@ -1259,7 +1259,7 @@ class NumpyBytePaddedFSLDataset(NumpyPaddedFSLDataset):
 
         # manually remove fim middle ID and retokenize - not needed for byte level models since
         # no tokenization bias.
-        self.fim_middle_id = self.tokenizer.hf_tokenizer.get_vocab()["<|fim_middle|>"]
+        self.fim_middle_id = self.tokenizer.hf_tokenizer.get_vocab().get("<|fim_middle|>")
         self.compute_bpe_merges = False
 
         # make sure we pad the subword sequence with the correct (subword) pad ID
