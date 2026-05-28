@@ -317,6 +317,8 @@ class ByteTokenizer:
             load_kwargs["local_files_only"] = True
 
         self.hf_tokenizer = AutoTokenizer.from_pretrained(original_identifier, **load_kwargs)
+        if self.hf_tokenizer.pad_token_id is None:
+            self.hf_tokenizer.pad_token_id = self.config.pad_token_id
         if self.config.special_tokens_first:
             self.offset = len(tokenizer_config.special_tokens)
             self.special_tokens_offset = 0
