@@ -695,6 +695,12 @@ def prepare_byte_example(
     max_compression_ratio=0.01,
     **kwargs,
 ):
+    # some tokenizers (e.g. llama3) have no dedicated pad token, so fall back to eos.
+    # these are throwaway pad positions, so eos (a clean single byte) is fine.
+    hf_pad_token_id = tokenizer.hf_tokenizer.pad_token_id
+    if hf_pad_token_id is None:
+        hf_pad_token_id = tokenizer.hf_tokenizer.eos_token_id
+
     if fim_middle_id is not None and fim_middle_id in item["input_ids"]:
         # remove FIM middle and retokenize
         input_ids = item["input_ids"].tolist()
@@ -703,7 +709,7 @@ def prepare_byte_example(
         # can be longer in extreme edge cases (this actually happens! less than once every 1k batches)
         original_input_ids = original_input_ids[:len(item["input_ids"])]
         while len(original_input_ids) < len(item["input_ids"]):
-            original_input_ids.append(tokenizer.hf_tokenizer.pad_token_id)
+            original_input_ids.append(hf_pad_token_id)
 
         original_input_ids = torch.tensor(original_input_ids, dtype=item["input_ids"].dtype)
     else:
@@ -713,7 +719,7 @@ def prepare_byte_example(
         # we manually add eos at the start so strip any existing ones
         # inefficient impl for >1 but we expect =1 or =0 almost always
         original_input_ids = torch.cat(
-            [original_input_ids[1:], torch.tensor([tokenizer.hf_tokenizer.pad_token_id], dtype=original_input_ids.dtype)]
+            [original_input_ids[1:], torch.tensor([hf_pad_token_id], dtype=original_input_ids.dtype)]
         )
 
     byte_tokens, patch_lengths = tokenizer.get_tokens_and_patch_lengths(original_input_ids.tolist(), add_bos=True, skip_last=True)
