@@ -1206,11 +1206,11 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
             device=byte_input_ids.device,  # type: ignore
             model_kwargs=model_kwargs,
         )
-        stopping_criteria = self._get_stopping_criteria(
+        stopping_criteria = [self._get_stopping_criteria(
             generation_config=generation_config,  # type: ignore
-            stopping_criteria=stopping_criteria,
+            stopping_criteria=copy.deepcopy(stopping_criteria),
             tokenizer=self.model.tokenizer,
-        )
+        ) for _ in range(batch_size)]
 
         # output container
         generated = byte_input_ids
@@ -1348,7 +1348,7 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
 
             for i in range(batch_size):
                 # passing `scores` to stopping criteria not implemented
-                if stopping_criteria(torch.tensor(non_boundary_generated_tokens[i], dtype=torch.long).unsqueeze(0), None).squeeze(0).item():  # type: ignore
+                if stopping_criteria[i](torch.tensor(non_boundary_generated_tokens[i], dtype=torch.long).unsqueeze(0), None).squeeze(0).item():  # type: ignore
                     stop_hit[i] = True
 
             finished |= stop_hit
