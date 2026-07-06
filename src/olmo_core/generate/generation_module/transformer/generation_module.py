@@ -158,6 +158,8 @@ class TransformerGenerationModule(GenerationModule):
         profile: bool = False,
         prefill_only: bool = False,
         vocab_size: int = 10_000,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
     ):
         input_ids = torch.randint(
             low=0,
@@ -194,8 +196,12 @@ class TransformerGenerationModule(GenerationModule):
             logits_to_keep=1,
             cache_leftpad=prefill_cache_leftpad,
         )
-        next_token_probs = F.softmax(next_token_logits, dim=-1)
-        next_token = next_token_logits.argmax(-1)
+        next_token = select_next_token(
+            next_token_logits.squeeze(1),
+            do_sample=temperature > 0.0,
+            temperature=temperature,
+            top_p=top_p,
+        ).unsqueeze(1)
 
         torch.cuda.synchronize()
         prefill_time = time.perf_counter() - start_time - cache_prepare_time
@@ -210,7 +216,7 @@ class TransformerGenerationModule(GenerationModule):
                 "cache_prepare_time": cache_prepare_time,
                 "prefill_time": prefill_time,
                 "generate_time": 0.0,
-            }        
+            }
 
         if prof is not None:
             prof.step()
@@ -221,8 +227,12 @@ class TransformerGenerationModule(GenerationModule):
                 next_token.to(self.device),
                 logits_to_keep=1,
             )
-            next_token_probs = F.softmax(next_token_logits, dim=-1)
-            next_token = next_token_probs.argmax(-1)
+            next_token = select_next_token(
+                next_token_logits.squeeze(1),
+                do_sample=temperature > 0.0,
+                temperature=temperature,
+                top_p=top_p,
+            ).unsqueeze(1)
 
             if prof is not None:
                 prof.step()
@@ -536,6 +546,7 @@ class TransformerGenerationModule(GenerationModule):
         load_thread_count: Optional[int] = None,
         dtype: Optional[DType] = None,
         attention_backend: Optional[AttentionBackendName] = None,
+        tokenizer_override: Optional[Any] = None,
         **kwargs,
     ) -> "TransformerGenerationModule":
         """
@@ -598,6 +609,7 @@ class TransformerGenerationModule(GenerationModule):
                 pre_download=pre_download,
                 load_thread_count=load_thread_count,
                 dtype=dtype,
+                original_tokenizer_override=tokenizer_override,
                 **kwargs,
             )
 
@@ -847,6 +859,8 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
         profile: bool = False,
         prefill_only: bool = False,
         vocab_size: int = 256,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
     ):
         self._set_model_mode("eval")
 
@@ -917,8 +931,12 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
             pad_state=zero_mask_state,
             bolmo_config=self.bolmo_config,
         )
-        next_token_probs = F.softmax(next_token_logits, dim=-1)
-        next_token = next_token_logits.argmax(-1)
+        next_token = select_next_token(
+            next_token_logits.squeeze(1),
+            do_sample=temperature > 0.0,
+            temperature=temperature,
+            top_p=top_p,
+        ).unsqueeze(1)
 
         torch.cuda.synchronize()
         prefill_time = time.perf_counter() - start_time - cache_prepare_time
@@ -949,8 +967,12 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
                 pad_state=zero_mask_state,
                 bolmo_config=self.bolmo_config,
             )
-            next_token_probs = F.softmax(next_token_logits, dim=-1)
-            next_token = next_token_probs.argmax(-1)
+            next_token = select_next_token(
+                next_token_logits.squeeze(1),
+                do_sample=temperature > 0.0,
+                temperature=temperature,
+                top_p=top_p,
+            ).unsqueeze(1)
 
             if prof is not None:
                 prof.step()
@@ -1528,6 +1550,7 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
         pre_download: bool = True,
         load_thread_count: Optional[int] = None,
         dtype: Optional[DType] = None,
+        original_tokenizer_override: Optional[TokenizerConfig] = None,
         **kwargs,
     ) -> "TransformerGenerationModule":
         """
@@ -1624,7 +1647,7 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
 
         generation_module = cls(
             model,
-            cast(ByteTokenizerConfig, tokenizer_config).build(),
+            cast(ByteTokenizerConfig, tokenizer_config).build(original_tokenizer_override=original_tokenizer_override),
             cast(BolmoConfig, bolmo_config),
             generation_config,
             **kwargs

@@ -54,6 +54,7 @@ class TransformerGenerationModuleConfig(Config):
         work_dir: Optional[PathOrStr] = None,
         pre_download: bool = True,
         load_thread_count: Optional[int] = None,
+        tokenizer_override: Optional[Any] = None,
         **kwargs,
     ) -> "TransformerGenerationModule":
         """
@@ -95,5 +96,6 @@ class TransformerGenerationModuleConfig(Config):
             pre_download=pre_download,
             load_thread_count=load_thread_count,
             dtype=dtype,
+            tokenizer_override=tokenizer_override,
             **config_dict,
         )
