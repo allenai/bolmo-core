@@ -153,10 +153,12 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             local_d_model = 1024
         elif OLMO_ARCH == "qwen3_8B":
             local_d_model = 4096
+        elif OLMO_ARCH == "qwen3_14B":
+            local_d_model = 5120
         elif OLMO_ARCH == "llama3_8B":
             local_d_model = 4096
         else:
-            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B', 'qwen3_0_6B', 'qwen3_8B', 'llama3_8B'.")
+            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B', 'qwen3_0_6B', 'qwen3_8B', 'qwen3_14B', 'llama3_8B'.")
 
         local_encoder_n_layers = 1
         local_decoder_n_layers = 9
@@ -204,10 +206,12 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             local_d_model = 1024
         elif OLMO_ARCH == "qwen3_8B":
             local_d_model = 4096
+        elif OLMO_ARCH == "qwen3_14B":
+            local_d_model = 5120
         elif OLMO_ARCH == "llama3_8B":
             local_d_model = 4096
         else:
-            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B', 'qwen3_0_6B', 'qwen3_8B', 'llama3_8B'.")
+            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B', 'qwen3_0_6B', 'qwen3_8B', 'qwen3_14B', 'llama3_8B'.")
 
         local_encoder_n_layers = 4
         local_decoder_n_layers = 4
