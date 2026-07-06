@@ -301,14 +301,14 @@ class ByteTokenizerConfig(TokenizerConfig):
             original_identifier=TokenizerConfig.dolma2().identifier,
         )
     
-    def build(self):
-        return ByteTokenizer(self)
+    def build(self, original_tokenizer_override=None) -> "ByteTokenizer":
+        return ByteTokenizer(self, original_tokenizer_override=original_tokenizer_override)
 
 
 class ByteTokenizer:
     TOKEN_ID_KEY = -1
 
-    def __init__(self, tokenizer_config: ByteTokenizerConfig):
+    def __init__(self, tokenizer_config: ByteTokenizerConfig, original_tokenizer_override=None):
         self.config = tokenizer_config
 
         original_identifier = tokenizer_config.original_identifier
@@ -316,7 +316,11 @@ class ByteTokenizer:
         if original_identifier and os.path.exists(original_identifier):
             load_kwargs["local_files_only"] = True
 
-        self.hf_tokenizer = AutoTokenizer.from_pretrained(original_identifier, **load_kwargs)
+        if original_tokenizer_override is None:
+            self.hf_tokenizer = AutoTokenizer.from_pretrained(original_identifier, **load_kwargs)
+        else:
+            self.hf_tokenizer = original_tokenizer_override
+
         hf_has_pad = self.hf_tokenizer.pad_token_id is not None
         if self.config.special_tokens_first:
             self.offset = len(tokenizer_config.special_tokens)
