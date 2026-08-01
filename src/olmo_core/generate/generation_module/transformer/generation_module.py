@@ -814,7 +814,9 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
         patch_lens = []
         for example_idx in range(input_ids.shape[0]):
             text = self.tokenizer.decode(input_ids[example_idx].tolist())
-            subword_tokens = self.tokenizer.hf_tokenizer.encode(text)
+            # add_special_tokens=False: get_tokens_and_patch_lengths adds the BOS patch itself,
+            # a tokenizer-added BOS (e.g. llama3) would add a spurious second one
+            subword_tokens = self.tokenizer.hf_tokenizer.encode(text, add_special_tokens=False)
             _, example_patch_lens = self.tokenizer.get_tokens_and_patch_lengths(subword_tokens, add_bos=True)
             patch_lens.append(example_patch_lens)
 
@@ -1512,7 +1514,11 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
 
         for example_idx in range(generated.shape[0]):
             completion_text = self.tokenizer.decode(generated[example_idx, prompt_len:].tolist())  # type: ignore
-            completion_subword_tokens = self.tokenizer.hf_tokenizer.encode(completion_text)
+            # add_special_tokens=False: some tokenizers (e.g. llama3) prepend BOS on encode,
+            # which would show up as a stray token at the start of every completion
+            completion_subword_tokens = self.tokenizer.hf_tokenizer.encode(
+                completion_text, add_special_tokens=False
+            )
 
             if completions_only:
                 subword_tokens = completion_subword_tokens
