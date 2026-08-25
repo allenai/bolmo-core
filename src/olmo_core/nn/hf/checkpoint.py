@@ -11,6 +11,7 @@ from transformers import AutoModelForCausalLM
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
+from olmo_core.data.tokenizer import ByteTokenizerConfig
 from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_full_tensor
 from olmo_core.doc_utils import beta_feature
 from olmo_core.io import clear_directory, copy_dir, file_exists, is_url
@@ -133,6 +134,7 @@ def save_hf_model(
     process_group: Optional[dist.ProcessGroup] = None,
     work_dir: Optional[PathOrStr] = None,
     save_overwrite: bool = False,
+    tokenizer_config: Optional[ByteTokenizerConfig] = None,
 ):
     """
     Saves an OLMo Core model state dict in Hugging Face transformers format.
@@ -145,9 +147,11 @@ def save_hf_model(
     :param work_dir: A local directory that can be used for holding temporary state. Required when
         downloading a model from a cloud directory.
     :param save_overwrite: Overwrite existing files in ``save_dir``.
+    :param tokenizer_config: The byte tokenizer config, only used for Bolmo models, whose HF config
+        embeds the tokenizer definition.
     """
 
-    hf_config = get_hf_config(model)
+    hf_config = get_hf_config(model, tokenizer_config=tokenizer_config)
 
     model_state_dict = {key: get_full_tensor(state) for key, state in model_state_dict.items()}
     if dtype is not None:

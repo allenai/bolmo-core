@@ -54,6 +54,28 @@ class BolmoRMSNorm(nn.Module):
         return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
 
 
+class BolmoQwenRMSNorm(BolmoRMSNorm):
+    """
+    RMSNorm matching HF's ``Qwen3RMSNorm`` rounding order: the normalized input is cast back to
+    its original dtype *before* the affine weight multiply, so that multiply happens in the input
+    dtype rather than in fp32. Identical to :class:`BolmoRMSNorm` when the input is already fp32.
+    """
+
+    def forward(self, hidden_states):
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(input_dtype)
+
+
+def build_norm(config: "BolmoConfig", hidden_size: int, eps: float) -> BolmoRMSNorm:
+    """Build the RMSNorm variant this checkpoint's original model used."""
+    if getattr(config, "norm_type", "rms") == "qwen_rms":
+        return BolmoQwenRMSNorm(hidden_size, eps)
+    return BolmoRMSNorm(hidden_size, eps)
+
+
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     """
     This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
@@ -152,8 +174,19 @@ class BolmoAttention(nn.Module):
         self.o_proj = nn.Linear(
             config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias
         )
-        self.q_norm = BolmoRMSNorm(config.num_attention_heads * self.head_dim, config.rms_norm_eps)
-        self.k_norm = BolmoRMSNorm(config.num_key_value_heads * self.head_dim, config.rms_norm_eps)
+        # OLMo 2/3 normalize the flat q/k projections before splitting heads; Qwen 3 normalizes
+        # each head over `head_dim` after the split; Llama 3 has no QK norm at all.
+        self.use_head_qk_norm = getattr(config, "use_head_qk_norm", False)
+        self.q_norm: Optional[BolmoRMSNorm] = None
+        self.k_norm: Optional[BolmoRMSNorm] = None
+        if getattr(config, "use_qk_norm", True):
+            if self.use_head_qk_norm:
+                q_norm_size = k_norm_size = self.head_dim
+            else:
+                q_norm_size = config.num_attention_heads * self.head_dim
+                k_norm_size = config.num_key_value_heads * self.head_dim
+            self.q_norm = build_norm(config, q_norm_size, config.rms_norm_eps)
+            self.k_norm = build_norm(config, k_norm_size, config.rms_norm_eps)
         assert config.layer_types is not None
         self.attention_type = config.layer_types[layer_idx]
         self.sliding_window = config.sliding_window if self.attention_type == "sliding_attention" else None
@@ -171,13 +204,21 @@ class BolmoAttention(nn.Module):
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
-        query_states = self.q_norm(self.q_proj(hidden_states))
-        key_states = self.k_norm(self.k_proj(hidden_states))
+        query_states = self.q_proj(hidden_states)
+        key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
+
+        if self.q_norm is not None and not self.use_head_qk_norm:
+            query_states = self.q_norm(query_states)
+            key_states = self.k_norm(key_states)  # type: ignore[misc]
 
         query_states = query_states.view(hidden_shape).transpose(1, 2)
         key_states = key_states.view(hidden_shape).transpose(1, 2)
         value_states = value_states.view(hidden_shape).transpose(1, 2)
+
+        if self.q_norm is not None and self.use_head_qk_norm:
+            query_states = self.q_norm(query_states)
+            key_states = self.k_norm(key_states)  # type: ignore[misc]
 
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
@@ -231,8 +272,16 @@ class BolmoDecoderLayer(GradientCheckpointingLayer):
         self.self_attn = BolmoAttention(config=config, layer_idx=layer_idx)
 
         self.mlp = BolmoMLP(config)
-        self.post_attention_layernorm = BolmoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_feedforward_layernorm = BolmoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.block_type = getattr(config, "block_type", "reordered_norm")
+        if self.block_type == "reordered_norm":
+            # OLMo 2/3: normalize the attention and MLP *outputs*.
+            self.post_attention_layernorm = build_norm(config, config.hidden_size, config.rms_norm_eps)
+            self.post_feedforward_layernorm = build_norm(config, config.hidden_size, config.rms_norm_eps)
+        else:
+            # Llama 3 / Qwen 3: normalize the attention and MLP *inputs*. HF names the MLP's input
+            # norm `post_attention_layernorm`, so the two topologies share that attribute name.
+            self.input_layernorm = build_norm(config, config.hidden_size, config.rms_norm_eps)
+            self.post_attention_layernorm = build_norm(config, config.hidden_size, config.rms_norm_eps)
 
     @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
@@ -246,9 +295,11 @@ class BolmoDecoderLayer(GradientCheckpointingLayer):
         position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.Tensor:
+        pre_norm = self.block_type != "reordered_norm"
+
         residual = hidden_states
         attn_out, _ = self.self_attn(
-            hidden_states=hidden_states,
+            hidden_states=self.input_layernorm(hidden_states) if pre_norm else hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
@@ -257,14 +308,14 @@ class BolmoDecoderLayer(GradientCheckpointingLayer):
             position_embeddings=position_embeddings,
             **kwargs,
         )
-        hidden_states = self.post_attention_layernorm(attn_out)
-        hidden_states = residual + hidden_states
+        hidden_states = residual + (attn_out if pre_norm else self.post_attention_layernorm(attn_out))
 
         # Fully Connected
         residual = hidden_states
-        mlp_out = self.mlp(hidden_states)
-        hidden_states = self.post_feedforward_layernorm(mlp_out)
-        hidden_states = residual + hidden_states
+        if pre_norm:
+            hidden_states = residual + self.mlp(self.post_attention_layernorm(hidden_states))
+        else:
+            hidden_states = residual + self.post_feedforward_layernorm(self.mlp(hidden_states))
 
         return hidden_states
 
@@ -487,8 +538,8 @@ class BolmoLocalLayer(nn.Module):
         local_mlp_config.intermediate_size = config.local_intermediate_size
         self.mlp = BolmoMLP(local_mlp_config)
 
-        self.pre_xlstm_layernorm = BolmoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.pre_feedforward_layernorm = BolmoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.pre_xlstm_layernorm = build_norm(config, config.hidden_size, config.rms_norm_eps)
+        self.pre_feedforward_layernorm = build_norm(config, config.hidden_size, config.rms_norm_eps)
 
     def forward(
         self,
@@ -533,6 +584,8 @@ class BolmoLocalEncoder(nn.Module):
             [BolmoLocalLayer(config) for _ in range(config.num_local_encoder_layers)]
         )
 
+        # NOT `build_norm`: OLMo Core hardcodes this one to `torch.nn.RMSNorm` for every
+        # architecture, so it does not follow `norm_type`.
         self.post_last_block_norm = BolmoRMSNorm(
             self.hidden_size,
             config.local_rms_norm_eps,
@@ -690,9 +743,10 @@ class BolmoLocalDecoder(nn.Module):
         self.config = config
         self.hidden_size = config.hidden_size
 
+        # NOT `build_norm`: see BolmoLocalEncoder.post_last_block_norm.
         self.initial_norm = BolmoRMSNorm(
             self.hidden_size,
-            eps=config.local_rms_norm_eps,
+            config.local_rms_norm_eps,
         )
 
         self.in_projection = nn.Linear(
@@ -879,8 +933,9 @@ class BolmoModel(BolmoPreTrainedModel):
         self.layers = nn.ModuleList(
             [BolmoDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
-        self.norm = BolmoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = build_norm(config, config.hidden_size, config.rms_norm_eps)
         self.gradient_checkpointing = False
+        self.has_sliding_layers = "sliding_attention" in (config.layer_types or [])
         self.rotary_embs = nn.ModuleDict(
             {
                 "sliding_attention": BolmoRotaryEmbedding(config=config, rope_type="default"),
@@ -982,16 +1037,21 @@ class BolmoModel(BolmoPreTrainedModel):
                 "past_key_values": past_key_values,
                 "position_ids": position_ids,
             }
-            # Create the masks
-            causal_mask_mapping = {
-                "full_attention": create_causal_mask(**mask_kwargs),
-                "sliding_attention": create_sliding_window_causal_mask(**mask_kwargs),
-            }
+            # Create the masks. Models whose global blocks are all full attention (OLMo 2,
+            # Llama 3, Qwen 3) have no `sliding_window` to build a sliding mask from.
+            causal_mask_mapping = {"full_attention": create_causal_mask(**mask_kwargs)}
+            if self.has_sliding_layers:
+                causal_mask_mapping["sliding_attention"] = create_sliding_window_causal_mask(
+                    **mask_kwargs
+                )
 
         position_embeddings_mapping = {
-            "sliding_attention": self.rotary_embs["sliding_attention"](h_byte, position_ids),
             "full_attention": self.rotary_embs["full_attention"](h_byte, position_ids),
         }
+        if self.has_sliding_layers:
+            position_embeddings_mapping["sliding_attention"] = self.rotary_embs[
+                "sliding_attention"
+            ](h_byte, position_ids)
 
         if h_patch.numel() > 0:
             # we need to convert from right-pad to left-pad and back for prefill

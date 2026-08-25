@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 import os
 from typing import Optional, Union
@@ -92,7 +92,12 @@ class BolmoTokenizer(PreTrainedTokenizer):
     TOKEN_ID_KEY = -1
 
     def __init__(self, **kwargs):
-        tokenizer_config = kwargs.pop("tokenizer_config", BolmoTokenizerConfig.bolmo())
+        tokenizer_config = kwargs.pop("tokenizer_config", None)
+        if tokenizer_config is None:
+            tokenizer_config = BolmoTokenizerConfig.bolmo()
+        elif isinstance(tokenizer_config, dict):
+            # round-tripped through tokenizer_config.json
+            tokenizer_config = BolmoTokenizerConfig(**tokenizer_config)
 
         self.config = tokenizer_config
         original_identifier = tokenizer_config.original_identifier
@@ -144,6 +149,14 @@ class BolmoTokenizer(PreTrainedTokenizer):
             eos_token=self.config.special_tokens[self.config.eos_token_id],
             pad_token=self.config.special_tokens[self.config.pad_token_id],
             extra_ids=0,
+            # kept in `init_kwargs` so `save_pretrained` writes it to tokenizer_config.json and a
+            # reloaded tokenizer keeps pointing at the same subword tokenizer
+            tokenizer_config=asdict(self.config),
+            **{
+                key: value
+                for key, value in kwargs.items()
+                if key not in ("bos_token", "eos_token", "pad_token", "extra_ids")
+            },
         )
 
     @property

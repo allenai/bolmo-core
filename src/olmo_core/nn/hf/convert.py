@@ -395,6 +395,43 @@ MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[
     }
 }
 
+#: Bolmo built on a pre-norm global model (Llama 3, Qwen 3) rather than a reordered-norm one
+#: (OLMo 2/3). In a pre-norm block OLMo Core's ``attention_norm`` is the attention *input* norm
+#: (HF ``input_layernorm``) and ``feed_forward_norm`` is the MLP input norm (HF, confusingly,
+#: ``post_attention_layernorm``) — not the output norms the base mapping assumes.
+MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS["bolmo_prenorm"] = {
+    **MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS["bolmo"],
+    f"blocks.{LAYER}.attention_norm.weight": StateMappingTemplate(
+        f"blocks.{LAYER}.attention_norm.weight",
+        f"model.layers.{LAYER}.input_layernorm.weight",
+    ),
+    f"blocks.{LAYER}.feed_forward_norm.weight": StateMappingTemplate(
+        f"blocks.{LAYER}.feed_forward_norm.weight",
+        f"model.layers.{LAYER}.post_attention_layernorm.weight",
+    ),
+    f"blocks.{LAYER}.attention_norm": StateMappingTemplate(
+        f"blocks.{LAYER}.attention_norm",
+        f"model.layers.{LAYER}.input_layernorm",
+        state_type=StateType.module,
+    ),
+    f"blocks.{LAYER}.feed_forward_norm": StateMappingTemplate(
+        f"blocks.{LAYER}.feed_forward_norm",
+        f"model.layers.{LAYER}.post_attention_layernorm",
+        state_type=StateType.module,
+    ),
+}
+
+
+def _olmo_core_to_hf_converter_key(config: PretrainedConfig) -> str | None:
+    """
+    The mapping variant to use for ``config``. Bolmo needs two, because the same ``model_type``
+    covers both reordered-norm and pre-norm global models.
+    """
+    model_type = getattr(config, "model_type", None)
+    if model_type == "bolmo" and getattr(config, "block_type", "reordered_norm") != "reordered_norm":
+        return "bolmo_prenorm"
+    return model_type
+
 
 def _get_hf_model_to_olmo_core_one_to_one_templates(
     model_type: str | None = None,
@@ -514,6 +551,16 @@ def get_converter_to_hf(model_type: str | None = None) -> StateConverter:
 
 
 @beta_feature
+def get_converter_to_hf_for_config(config: PretrainedConfig) -> StateConverter:
+    """
+    Like :func:`get_converter_to_hf`, but picks the mapping variant from the whole config rather
+    than just ``model_type``. Prefer this: some model types (Bolmo) need more than ``model_type``
+    to pin down the mapping.
+    """
+    return _get_converter_to_hf(_olmo_core_to_hf_converter_key(config))
+
+
+@beta_feature
 def convert_state_to_hf(
     config: PretrainedConfig, olmo_core_state: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -525,6 +572,6 @@ def convert_state_to_hf(
         :class:`DTensor` or :class:`ShardedTensor`
     """
 
-    converter = _get_converter_to_hf(getattr(config, "model_type", None))
+    converter = _get_converter_to_hf(_olmo_core_to_hf_converter_key(config))
 
     return _convert_state(config, olmo_core_state, converter)

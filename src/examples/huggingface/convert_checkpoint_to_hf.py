@@ -23,13 +23,14 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
-from olmo_core.data.tokenizer import TokenizerConfig
+from olmo_core.data.tokenizer import ByteTokenizerConfig, TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.io import file_exists, join_path
 from olmo_core.nn.attention import AttentionBackendName, AttentionType
 from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import save_hf_model
-from olmo_core.nn.hf.convert import get_converter_to_hf
+from olmo_core.nn.hf.config import get_bolmo_tokenizer_config
+from olmo_core.nn.hf.convert import get_converter_to_hf_for_config
 from olmo_core.nn.moe.moe import MoEType
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
@@ -140,6 +141,13 @@ def convert_checkpoint_to_hf(
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
     vocab_size = tokenizer_config.vocab_size
 
+    # Bolmo's HF config embeds the byte tokenizer definition, including which subword tokenizer
+    # the byte ids expand back into. That varies per checkpoint (dolma2 / Qwen3 / Llama 3), so it
+    # has to be carried over rather than left at its default.
+    byte_tokenizer_config = (
+        tokenizer_config if isinstance(tokenizer_config, ByteTokenizerConfig) else None
+    )
+
     with TemporaryDirectory() as work_dir:
         model_and_optim_dir = join_path(original_checkpoint_path, "model_and_optim")
         log.info(f"Loading checkpoint from '{model_and_optim_dir}'")
@@ -183,12 +191,21 @@ def convert_checkpoint_to_hf(
             vocab_size=vocab_size,
             work_dir=work_dir,
             save_overwrite=True,
+            tokenizer_config=byte_tokenizer_config,
         )
         # checkpointer.save(output_path, train_module, train_state={}, format=output_format)
         log.info(f"Successfully saved converted model to '{output_path}'")
 
     tokenizer_id = tokenizer_id or tokenizer_config.identifier
-    if tokenizer_id is not None:
+    if byte_tokenizer_config is not None:
+        # A byte tokenizer has no HF Hub identifier of its own — it wraps one. Save the Bolmo
+        # tokenizer itself so the exported directory is self-contained.
+        log.info("Saving Bolmo tokenizer built from the checkpoint's byte tokenizer config")
+        bolmo_tokenizer = get_bolmo_tokenizer_config(byte_tokenizer_config).build()
+        bolmo_tokenizer.model_max_length = max_sequence_length or bolmo_tokenizer.model_max_length
+        bolmo_tokenizer.save_pretrained(output_path)
+        log.info("Successfully saved Bolmo tokenizer")
+    elif tokenizer_id is not None:
         log.info(
             f"Saving HF tokenizer {tokenizer_id}, using updated config from tokenizer config data and script arguments"
         )
@@ -376,7 +393,7 @@ def validate_conversion(
         logits = model(input_ids=input_ids)
 
     if debug:
-        state_converter = get_converter_to_hf(getattr(hf_config, "model_type", None))
+        state_converter = get_converter_to_hf_for_config(hf_config)
         if not hasattr(hf_config, "num_hidden_layers"):
             raise ValueError(f"Number of hidden layers missing in HF config: {hf_config}")
         n_layers: int = hf_config.num_hidden_layers
