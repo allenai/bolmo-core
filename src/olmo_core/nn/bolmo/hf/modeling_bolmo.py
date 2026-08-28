@@ -1,6 +1,10 @@
 import copy
+import inspect
+from importlib.metadata import version as _package_version
 from typing import Callable, Optional, Union, cast
 import math
+
+from packaging.version import Version
 
 import torch
 import torch.nn as nn
@@ -21,7 +25,38 @@ from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from transformers.processing_utils import Unpack
 from transformers.utils import can_return_tuple
 from transformers.utils.deprecation import deprecate_kwarg
-from transformers.utils.generic import check_model_inputs
+from transformers.utils.generic import check_model_inputs as _check_model_inputs
+
+TRANSFORMERS_V5 = Version(_package_version("transformers")) >= Version("5.0.0")
+
+_CAUSAL_MASK_PARAMS = frozenset(inspect.signature(create_causal_mask).parameters)
+_SLIDING_MASK_PARAMS = frozenset(inspect.signature(create_sliding_window_causal_mask).parameters)
+
+if TRANSFORMERS_V5:
+    # A plain decorator from 5.0.0 on (a deprecated alias of merge_with_config_defaults).
+    def check_model_inputs(**kwargs):
+        """Swallow 4.x's factory kwargs (e.g. tie_last_hidden_states); 5.x has no slot for them."""
+        return _check_model_inputs
+
+else:
+    # A decorator factory before 5.0.0.
+    check_model_inputs = _check_model_inputs
+
+
+def _compute_default_rope_parameters(config, device=None, **kwargs):
+    """Inverse frequencies for the original RoPE.
+
+    5.0.0 dropped both the "default" entry of ROPE_INIT_FUNCTIONS and the module-level
+    helper, relocating it to a staticmethod on the rotary-embedding classes. Reads
+    either the 4.x (`rope_theta`) or 5.x (`rope_parameters`) config layout.
+    """
+    base = getattr(config, "rope_theta", None)
+    if base is None:
+        base = config.rope_parameters["rope_theta"]
+    dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
+    inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float) / dim))
+    return inv_freq.to(device), 1.0
+
 
 from .configuration_bolmo import BolmoConfig
 from .tokenization_bolmo import BolmoTokenizerConfig
@@ -882,11 +917,17 @@ class BolmoRotaryEmbedding(nn.Module):
         self.original_max_seq_len = config.max_position_embeddings
 
         self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
+        if TRANSFORMERS_V5 and self.rope_type == "default":
+            self.rope_init_fn = _compute_default_rope_parameters
+        else:
+            self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
         inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.original_inv_freq = self.inv_freq
+
+    # 5.x `_init_weights` looks this up on the rotary module itself.
+    compute_default_rope_parameters = staticmethod(_compute_default_rope_parameters)
 
     @torch.no_grad()
     @dynamic_rope_update  # power user: used with advanced RoPE types (e.g. dynamic rope)
@@ -1031,18 +1072,23 @@ class BolmoModel(BolmoPreTrainedModel):
             # Prepare mask arguments
             mask_kwargs = {
                 "config": self.config,
-                "input_embeds": h_patch,
+                "input_embeds": h_patch,   # renamed `inputs_embeds` in 5.2.0
+                "inputs_embeds": h_patch,
                 "attention_mask": attention_mask,
-                "cache_position": cache_position,
+                "cache_position": cache_position,  # dropped in 5.9.0
                 "past_key_values": past_key_values,
                 "position_ids": position_ids,
             }
             # Create the masks. Models whose global blocks are all full attention (OLMo 2,
             # Llama 3, Qwen 3) have no `sliding_window` to build a sliding mask from.
-            causal_mask_mapping = {"full_attention": create_causal_mask(**mask_kwargs)}
+            causal_mask_mapping = {
+                "full_attention": create_causal_mask(
+                    **{k: v for k, v in mask_kwargs.items() if k in _CAUSAL_MASK_PARAMS}
+                )
+            }
             if self.has_sliding_layers:
                 causal_mask_mapping["sliding_attention"] = create_sliding_window_causal_mask(
-                    **mask_kwargs
+                    **{k: v for k, v in mask_kwargs.items() if k in _SLIDING_MASK_PARAMS}
                 )
 
         position_embeddings_mapping = {
@@ -1195,9 +1241,15 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
     ) -> Union[GenerateOutput, torch.Tensor]:
         # generic preprocessing
 
-        generation_config, model_kwargs = self._prepare_generation_config(
-            generation_config, use_model_defaults, **kwargs
-        )
+        # 5.0.0 dropped the positional `use_model_defaults`.
+        if TRANSFORMERS_V5:
+            generation_config, model_kwargs = self._prepare_generation_config(
+                generation_config, **kwargs
+            )
+        else:
+            generation_config, model_kwargs = self._prepare_generation_config(
+                generation_config, use_model_defaults, **kwargs
+            )
         self._prepare_special_tokens(generation_config, device=self.model.device)
 
         logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
