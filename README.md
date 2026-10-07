@@ -1,7 +1,6 @@
 <div align="center">
   <br>
-  <h1>Bolmo</h1>
-  <h4>The first family of competitive fully open byte-level language models.</h4>
+  <h1>Bolmo: Retrofitting Language Models to Operate Over Bytes</h1>
 </div>
 
 <img width="7711" height="4780" alt="bolmo_architecture" src="https://github.com/user-attachments/assets/a143aca6-4adf-4b57-b352-8bf93d51bb48" />
@@ -21,7 +20,9 @@
 
 ---
 
-**Bolmo** is the first fully-open byte-level language model achieving performance on the level of state-of-the-art subword-level language models. Unlike traditional language models that rely on subword tokenizers (like BPE or WordPiece), Bolmo operates directly on raw UTF-8 bytes, making it:
+<b>News: Our work has now been published in <em>Nature</em> ([link](https://www.nature.com/articles/s41586-026-11111-4)). We are releasing new checkpoints across more model families as part of the revised version.</b>
+
+This repository contains our work on <em>byteifying</em> language models. Unlike traditional language models that rely on subword tokenizers (like BPE or WordPiece), these models operates directly on raw UTF-8 bytes, making them:
 
 - **Free of subword tokenization**: No need for language-specific tokenizers or vocabulary management.
 - **Universally applicable**: Works seamlessly across all languages, scripts, and domains.
@@ -29,18 +30,28 @@
 - **Competitive performance**: Comes close to matching (and in some cases exceeds) subword-based state-of-the-art models across a wide range of tasks.
 - **Better character understanding**: Superior performance on tasks requiring character-level knowledge.
 
-See our technical report for details: https://allenai.org/papers/bolmo.
-
-This repository is a fork of [OLMo-core](https://github.com/allenai/OLMo-core) that implements the complete Bolmo architecture and training pipeline through **byteifying** - our approach to converting existing subword models to byte-level models, using <1% of the pretraining budget.
-
-## Models
-
-We release Bolmo models in two sizes:
+As part of this effort, we are releasing byteified checkpoints of OLMo 2 1B, Olmo 3 7B, Qwen 3 8B and Llama3 8B.
 
 | Model | Parameters | Base Model | HuggingFace |
 |-------|-----------|------------|-------------|
 | **Bolmo-7B** | 7.6B | Olmo 3 7B | [allenai/Bolmo-7B](https://huggingface.co/allenai/Bolmo-7B) |
 | **Bolmo-1B** | 1.5B | OLMo 2 1B | [allenai/Bolmo-1B](https://huggingface.co/allenai/Bolmo-1B) |
+| **Bwen-8B** | 8.3B | Qwen 3 8B | [allenai/Bolmo-1B](https://huggingface.co/allenai/Bwen-8B) |
+| **Blama-8B** | 8.3B | Llama 3 8B | [allenai/Llama-3-Blama-8B](https://huggingface.co/allenai/Llama-3-Blama-8B) |
+
+We also release checkpoints which have undergone Stage 1 training only (only learning parameters for the new byte-level encoder and decoder, without changes to the internal model parameters).
+
+
+| Model | Parameters | Base Model | HuggingFace |
+|-------|-----------|------------|-------------|
+| **Bolmo-7B Stage 1** | 7.6B | Olmo 3 7B | [allenai/Bolmo-7B-Stage1](https://huggingface.co/allenai/Bolmo-7B-Stage1) |
+| **Bolmo-1B Stage 1** | 1.5B | OLMo 2 1B | [allenai/Bolmo-1B-Stage1](https://huggingface.co/allenai/Bolmo-1B-Stage1) |
+| **Bwen-8B Stage 1** | 8.3B | Qwen 3 8B | [allenai/Bolmo-1B-Stage1](https://huggingface.co/allenai/Bwen-8B-Stage1) |
+| **Blama-8B Stage 1** | 8.3B | Llama 3 8B | [allenai/Llama-3-Blama-8B-Stage1](https://huggingface.co/allenai/Llama-3-Blama-8B-Stage1) |
+
+See our <em>Nature</em> paper for details: https://allenai.org/papers/bolmo.
+
+This repository is a fork of [OLMo-core](https://github.com/allenai/OLMo-core) that implements the complete Bolmo architecture and training pipeline through **byteifying** - our approach to converting existing subword models to byte-level models, using <1% of the pretraining budget.
 
 Training data is available via HuggingFace at [allenai/bolmo_mix](https://huggingface.co/datasets/allenai/bolmo_mix).
 
@@ -147,25 +158,9 @@ python3 src/examples/bolmo/instructify.py \
 ```
 
 
-## Evaluation
+## Reproducing Evaluation
 
-### Bolmo 7B Results
-
-Bolmo 7B matches or exceeds the performance of state-of-the-art byte-level models and comes close to the source Olmo 3 7B model:
-
-| Category | Bolmo 7B | Olmo 3 7B | BLT 7B |
-|----------|----------|-----------|---------|
-| Character Understanding (CUTE) | 78.6 | 56.9 | 52.3 |
-| Multilingual Char (EXECUTE) | 71.6 | 55.1 | 46.3 |
-| Code | 41.0 | 40.1 | 31.6 |
-| Math | 48.9 | 55.3 | 15.7 |
-| MC Stem | 65.5 | 66.3 | 49.0 |
-| MC Non-Stem | 75.8 | 77.7 | 56.6 |
-| GenQA | 70.9 | 72.4 | 68.4 |
-
-Full evaluation results available in the paper.
-
-### Reproducing Evaluations
+Full evaluation results available in the [paper](https://www.nature.com/articles/s41586-026-11111-4).
 
 We use [olmes](https://github.com/allenai/olmes) for all evaluations.
 
