@@ -102,6 +102,22 @@ class BolmoConfig(PretrainedConfig):
         layer_types (`list`, *optional*):
             Attention pattern for each layer. Defaults to sliding window attention
             for 3 out of 4 layers, and full attention for every 4th layer.
+        head_dim (`int`, *optional*):
+            Attention head dimension. Defaults to `hidden_size // num_attention_heads`.
+        block_type (`str`, *optional*, defaults to `"reordered_norm"`):
+            Topology of the global transformer blocks. `"reordered_norm"` normalizes the
+            attention/MLP *outputs* (OLMo 2/3), `"default"` normalizes their *inputs* (Llama 3,
+            Qwen 3). These correspond to OLMo Core's `TransformerBlockType` of the same names.
+        norm_type (`str`, *optional*, defaults to `"rms"`):
+            RMSNorm variant. `"rms"` multiplies by the affine weight in fp32 and then casts back
+            (OLMo Core `RMSNorm`); `"qwen_rms"` casts back first and multiplies in the input dtype
+            (HF `Qwen3RMSNorm`, OLMo Core `QwenRMSNorm`). Only differs outside of fp32.
+        use_qk_norm (`bool`, *optional*, defaults to `True`):
+            Whether the query/key projections are normalized. Llama 3 does not use QK norm.
+        use_head_qk_norm (`bool`, *optional*, defaults to `False`):
+            If `True`, QK norm is applied per head over `head_dim` *after* the heads are split out
+            (Qwen 3). If `False`, it is applied over the flat projection *before* the split
+            (OLMo 2/3). Only meaningful when `use_qk_norm=True`.
 
     ```python
     >>> from transformers import Olmo3Model, Olmo3Config
@@ -157,6 +173,12 @@ class BolmoConfig(PretrainedConfig):
         rms_norm_eps=1e-5,
         sliding_window=4096,
         layer_types=None,
+        head_dim=None,
+        # global block architecture. defaults describe OLMo 2/3.
+        block_type: str = "reordered_norm",
+        norm_type: str = "rms",
+        use_qk_norm: bool = True,
+        use_head_qk_norm: bool = False,
         # bolmo config
         add_expanded_embeddings: bool = True,
         boundary_predictor_lookahead: int = 1,
@@ -189,6 +211,7 @@ class BolmoConfig(PretrainedConfig):
             num_key_value_heads = num_attention_heads
 
         self.num_key_value_heads = num_key_value_heads
+        self.head_dim = head_dim if head_dim is not None else hidden_size // num_attention_heads
         self.hidden_act = hidden_act
         self.initializer_range = initializer_range
         self.use_cache = use_cache
@@ -207,6 +230,15 @@ class BolmoConfig(PretrainedConfig):
                 "sliding_attention" if (i + 1) % 4 != 0 else "full_attention" for i in range(self.num_hidden_layers)
             ]
         layer_type_validation(self.layer_types)
+
+        if block_type not in ("reordered_norm", "default"):
+            raise ValueError(f"Unknown block_type: {block_type!r}")
+        if norm_type not in ("rms", "qwen_rms"):
+            raise ValueError(f"Unknown norm_type: {norm_type!r}")
+        self.block_type = block_type
+        self.norm_type = norm_type
+        self.use_qk_norm = use_qk_norm
+        self.use_head_qk_norm = use_head_qk_norm
 
         # bolmo configuration
         self.add_expanded_embeddings = add_expanded_embeddings

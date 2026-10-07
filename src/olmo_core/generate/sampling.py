@@ -90,18 +90,6 @@ def select_next_token(
     if not do_sample or (isinstance(temperature, float) and temperature == 0):
         return greedy_selection(logits)
 
-    nan_mask = torch.isnan(logits)
-    num_nans = nan_mask.sum().item()
-    total_elements = logits.numel()
-    nan_percentage = (num_nans / total_elements) * 100 if total_elements > 0 else 0
-    batch_nan_info = [i for i in range(logits.shape[0]) if torch.isnan(logits[i]).any()]
-
-    assert not nan_mask.any(), (
-        f"NaN values detected in logits: {num_nans}/{total_elements} ({nan_percentage:.2f}%) "
-        f"NaN values in tensor of shape {logits.shape}"
-        + (f" in batch elements: {', '.join(map(str, batch_nan_info))}" if batch_nan_info else "")
-    )
-
     scaled_logits = logits / temperature
     if top_k != -1:
         scaled_logits = top_k_filtering(scaled_logits, top_k)

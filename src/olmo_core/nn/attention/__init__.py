@@ -157,6 +157,7 @@ class AttentionConfig(Config):
     """
     n_heads: int = 16
     n_kv_heads: Optional[int] = None
+    head_dim: Optional[int] = None
     bias: Optional[bool] = None
     rope: Optional[RoPEConfig] = None
     clip_qkv: Optional[float] = None
@@ -176,15 +177,15 @@ class AttentionConfig(Config):
         """
         n_heads = self.n_heads
         n_kv_heads = self.n_kv_heads or n_heads
-        head_dim = d_model // n_heads
+        head_dim = self.head_dim or d_model // n_heads
         bias = self.bias if self.bias is not None else self.name != AttentionType.normalized
 
         params = 0
 
         # Block attention Q projection.
-        params += d_model * d_model
+        params += d_model * n_heads * head_dim
         if bias:
-            params += d_model
+            params += n_heads * head_dim
 
         # Block attention KV projections.
         params += 2 * d_model * n_kv_heads * head_dim
@@ -196,16 +197,15 @@ class AttentionConfig(Config):
             if self.use_head_qk_norm:
                 params += 2 * self.qk_norm.num_params(head_dim)
             else:
-                params += 2 * self.qk_norm.num_params(d_model)
+                params += 2 * self.qk_norm.num_params(n_heads * head_dim)
 
         # Block attention out.
-        params += d_model * d_model
+        params += n_heads * head_dim * d_model
         if bias:
             params += d_model
 
         # Block QK scaling factors.
         if self.name == AttentionType.normalized:
-            head_dim = d_model // n_heads
             params += n_heads * head_dim
             params += n_kv_heads * head_dim
 
@@ -326,6 +326,7 @@ class Attention(AttentionBase):
         d_model: int,
         n_heads: int,
         n_kv_heads: Optional[int] = None,
+        head_dim: Optional[int] = None,
         bias: bool = True,
         rope: Optional[RoPEConfig] = None,
         clip_qkv: Optional[float] = None,
@@ -344,15 +345,24 @@ class Attention(AttentionBase):
 
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads or n_heads
-        self.head_dim = d_model // n_heads
-        self.w_q = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
+        self.d_model = d_model
+        # Some models (e.g. Qwen3) use explicit head_dim that differs from d_model // n_heads.
+        if head_dim is not None:
+            self.head_dim = head_dim
+        else:
+            self.head_dim = d_model // n_heads
+        self.w_q = nn.Linear(
+            d_model, n_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+        )
         self.w_k = nn.Linear(
             d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
         )
         self.w_v = nn.Linear(
             d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
         )
-        self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
+        self.w_out = nn.Linear(
+            n_heads * self.head_dim, d_model, bias=bias, dtype=dtype, device=init_device
+        )
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
 
@@ -363,7 +373,7 @@ class Attention(AttentionBase):
                 self.q_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
                 self.k_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
             else:
-                self.q_norm = qk_norm.build(size=d_model, init_device=init_device)
+                self.q_norm = qk_norm.build(size=n_heads * self.head_dim, init_device=init_device)
                 self.k_norm = qk_norm.build(
                     size=self.n_kv_heads * self.head_dim, init_device=init_device
                 )
@@ -457,6 +467,36 @@ class Attention(AttentionBase):
             self.kv_cache_manager.update_seqlen(q.shape[1])
         return att
 
+    def _apply_rope(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        start_pos: Optional[int],
+        pos_sin: Optional[torch.Tensor],
+        pos_cos: Optional[torch.Tensor],
+        freqs_cis: Optional[torch.Tensor],
+        cu_doc_lens: Optional[torch.Tensor],
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        assert self.rope is not None
+        rope_kwargs = {}
+        if cu_doc_lens is not None:
+            if not isinstance(self.rope, RotaryEmbedding):
+                raise NotImplementedError(
+                    "Intra-document RoPE (cu_doc_lens) is only supported by RotaryEmbedding; "
+                    f"got {type(self.rope).__name__}"
+                )
+            rope_kwargs["cu_doc_lens"] = cu_doc_lens
+        return self.rope(
+            q,
+            k,
+            head_first=False,
+            start_pos=start_pos,
+            pos_sin=pos_sin,
+            pos_cos=pos_cos,
+            freqs_cis=freqs_cis,
+            **rope_kwargs,
+        )
+
     def forward(
         self,
         x: torch.Tensor,
@@ -527,15 +567,7 @@ class Attention(AttentionBase):
                 )
 
             start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
-            q, k = self.rope(
-                q,
-                k,
-                head_first=False,
-                start_pos=start_pos,
-                pos_sin=pos_sin,
-                pos_cos=pos_cos,
-                freqs_cis=freqs_cis,
-            )
+            q, k = self._apply_rope(q, k, start_pos, pos_sin, pos_cos, freqs_cis, cu_doc_lens)
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -750,15 +782,7 @@ class NormalizedAttention(Attention):
                 )
 
             start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
-            q, k = self.rope(
-                q,
-                k,
-                head_first=False,
-                start_pos=start_pos,
-                pos_sin=pos_sin,
-                pos_cos=pos_cos,
-                freqs_cis=freqs_cis,
-            )
+            q, k = self._apply_rope(q, k, start_pos, pos_sin, pos_cos, freqs_cis, cu_doc_lens)
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -903,6 +927,10 @@ class FusedAttention(AttentionBase):
         if cache_leftpad:
             raise NotImplementedError(
                 "cache_leftpad is not supported for the fused attention variant"
+            )
+        if cu_doc_lens is not None and self.rope is not None:
+            raise NotImplementedError(
+                "Intra-document RoPE (cu_doc_lens) is not yet supported by FusedAttention"
             )
 
         B, T, _ = x.shape

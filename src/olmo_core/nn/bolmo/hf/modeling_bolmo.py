@@ -1,6 +1,10 @@
 import copy
+import inspect
+from importlib.metadata import version as _package_version
 from typing import Callable, Optional, Union, cast
 import math
+
+from packaging.version import Version
 
 import torch
 import torch.nn as nn
@@ -21,7 +25,38 @@ from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from transformers.processing_utils import Unpack
 from transformers.utils import can_return_tuple
 from transformers.utils.deprecation import deprecate_kwarg
-from transformers.utils.generic import check_model_inputs
+from transformers.utils.generic import check_model_inputs as _check_model_inputs
+
+TRANSFORMERS_V5 = Version(_package_version("transformers")) >= Version("5.0.0")
+
+_CAUSAL_MASK_PARAMS = frozenset(inspect.signature(create_causal_mask).parameters)
+_SLIDING_MASK_PARAMS = frozenset(inspect.signature(create_sliding_window_causal_mask).parameters)
+
+if TRANSFORMERS_V5:
+    # A plain decorator from 5.0.0 on (a deprecated alias of merge_with_config_defaults).
+    def check_model_inputs(**kwargs):
+        """Swallow 4.x's factory kwargs (e.g. tie_last_hidden_states); 5.x has no slot for them."""
+        return _check_model_inputs
+
+else:
+    # A decorator factory before 5.0.0.
+    check_model_inputs = _check_model_inputs
+
+
+def _compute_default_rope_parameters(config, device=None, **kwargs):
+    """Inverse frequencies for the original RoPE.
+
+    5.0.0 dropped both the "default" entry of ROPE_INIT_FUNCTIONS and the module-level
+    helper, relocating it to a staticmethod on the rotary-embedding classes. Reads
+    either the 4.x (`rope_theta`) or 5.x (`rope_parameters`) config layout.
+    """
+    base = getattr(config, "rope_theta", None)
+    if base is None:
+        base = config.rope_parameters["rope_theta"]
+    dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
+    inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float) / dim))
+    return inv_freq.to(device), 1.0
+
 
 from .configuration_bolmo import BolmoConfig
 from .tokenization_bolmo import BolmoTokenizerConfig
@@ -52,6 +87,28 @@ class BolmoRMSNorm(nn.Module):
 
     def extra_repr(self):
         return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
+
+
+class BolmoQwenRMSNorm(BolmoRMSNorm):
+    """
+    RMSNorm matching HF's ``Qwen3RMSNorm`` rounding order: the normalized input is cast back to
+    its original dtype *before* the affine weight multiply, so that multiply happens in the input
+    dtype rather than in fp32. Identical to :class:`BolmoRMSNorm` when the input is already fp32.
+    """
+
+    def forward(self, hidden_states):
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(input_dtype)
+
+
+def build_norm(config: "BolmoConfig", hidden_size: int, eps: float) -> BolmoRMSNorm:
+    """Build the RMSNorm variant this checkpoint's original model used."""
+    if getattr(config, "norm_type", "rms") == "qwen_rms":
+        return BolmoQwenRMSNorm(hidden_size, eps)
+    return BolmoRMSNorm(hidden_size, eps)
 
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
@@ -152,8 +209,19 @@ class BolmoAttention(nn.Module):
         self.o_proj = nn.Linear(
             config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias
         )
-        self.q_norm = BolmoRMSNorm(config.num_attention_heads * self.head_dim, config.rms_norm_eps)
-        self.k_norm = BolmoRMSNorm(config.num_key_value_heads * self.head_dim, config.rms_norm_eps)
+        # OLMo 2/3 normalize the flat q/k projections before splitting heads; Qwen 3 normalizes
+        # each head over `head_dim` after the split; Llama 3 has no QK norm at all.
+        self.use_head_qk_norm = getattr(config, "use_head_qk_norm", False)
+        self.q_norm: Optional[BolmoRMSNorm] = None
+        self.k_norm: Optional[BolmoRMSNorm] = None
+        if getattr(config, "use_qk_norm", True):
+            if self.use_head_qk_norm:
+                q_norm_size = k_norm_size = self.head_dim
+            else:
+                q_norm_size = config.num_attention_heads * self.head_dim
+                k_norm_size = config.num_key_value_heads * self.head_dim
+            self.q_norm = build_norm(config, q_norm_size, config.rms_norm_eps)
+            self.k_norm = build_norm(config, k_norm_size, config.rms_norm_eps)
         assert config.layer_types is not None
         self.attention_type = config.layer_types[layer_idx]
         self.sliding_window = config.sliding_window if self.attention_type == "sliding_attention" else None
@@ -171,13 +239,21 @@ class BolmoAttention(nn.Module):
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
-        query_states = self.q_norm(self.q_proj(hidden_states))
-        key_states = self.k_norm(self.k_proj(hidden_states))
+        query_states = self.q_proj(hidden_states)
+        key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
+
+        if self.q_norm is not None and not self.use_head_qk_norm:
+            query_states = self.q_norm(query_states)
+            key_states = self.k_norm(key_states)  # type: ignore[misc]
 
         query_states = query_states.view(hidden_shape).transpose(1, 2)
         key_states = key_states.view(hidden_shape).transpose(1, 2)
         value_states = value_states.view(hidden_shape).transpose(1, 2)
+
+        if self.q_norm is not None and self.use_head_qk_norm:
+            query_states = self.q_norm(query_states)
+            key_states = self.k_norm(key_states)  # type: ignore[misc]
 
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
@@ -231,8 +307,16 @@ class BolmoDecoderLayer(GradientCheckpointingLayer):
         self.self_attn = BolmoAttention(config=config, layer_idx=layer_idx)
 
         self.mlp = BolmoMLP(config)
-        self.post_attention_layernorm = BolmoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_feedforward_layernorm = BolmoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.block_type = getattr(config, "block_type", "reordered_norm")
+        if self.block_type == "reordered_norm":
+            # OLMo 2/3: normalize the attention and MLP *outputs*.
+            self.post_attention_layernorm = build_norm(config, config.hidden_size, config.rms_norm_eps)
+            self.post_feedforward_layernorm = build_norm(config, config.hidden_size, config.rms_norm_eps)
+        else:
+            # Llama 3 / Qwen 3: normalize the attention and MLP *inputs*. HF names the MLP's input
+            # norm `post_attention_layernorm`, so the two topologies share that attribute name.
+            self.input_layernorm = build_norm(config, config.hidden_size, config.rms_norm_eps)
+            self.post_attention_layernorm = build_norm(config, config.hidden_size, config.rms_norm_eps)
 
     @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
@@ -246,9 +330,11 @@ class BolmoDecoderLayer(GradientCheckpointingLayer):
         position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.Tensor:
+        pre_norm = self.block_type != "reordered_norm"
+
         residual = hidden_states
         attn_out, _ = self.self_attn(
-            hidden_states=hidden_states,
+            hidden_states=self.input_layernorm(hidden_states) if pre_norm else hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
@@ -257,14 +343,14 @@ class BolmoDecoderLayer(GradientCheckpointingLayer):
             position_embeddings=position_embeddings,
             **kwargs,
         )
-        hidden_states = self.post_attention_layernorm(attn_out)
-        hidden_states = residual + hidden_states
+        hidden_states = residual + (attn_out if pre_norm else self.post_attention_layernorm(attn_out))
 
         # Fully Connected
         residual = hidden_states
-        mlp_out = self.mlp(hidden_states)
-        hidden_states = self.post_feedforward_layernorm(mlp_out)
-        hidden_states = residual + hidden_states
+        if pre_norm:
+            hidden_states = residual + self.mlp(self.post_attention_layernorm(hidden_states))
+        else:
+            hidden_states = residual + self.post_feedforward_layernorm(self.mlp(hidden_states))
 
         return hidden_states
 
@@ -487,8 +573,8 @@ class BolmoLocalLayer(nn.Module):
         local_mlp_config.intermediate_size = config.local_intermediate_size
         self.mlp = BolmoMLP(local_mlp_config)
 
-        self.pre_xlstm_layernorm = BolmoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.pre_feedforward_layernorm = BolmoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.pre_xlstm_layernorm = build_norm(config, config.hidden_size, config.rms_norm_eps)
+        self.pre_feedforward_layernorm = build_norm(config, config.hidden_size, config.rms_norm_eps)
 
     def forward(
         self,
@@ -533,6 +619,8 @@ class BolmoLocalEncoder(nn.Module):
             [BolmoLocalLayer(config) for _ in range(config.num_local_encoder_layers)]
         )
 
+        # NOT `build_norm`: OLMo Core hardcodes this one to `torch.nn.RMSNorm` for every
+        # architecture, so it does not follow `norm_type`.
         self.post_last_block_norm = BolmoRMSNorm(
             self.hidden_size,
             config.local_rms_norm_eps,
@@ -690,9 +778,10 @@ class BolmoLocalDecoder(nn.Module):
         self.config = config
         self.hidden_size = config.hidden_size
 
+        # NOT `build_norm`: see BolmoLocalEncoder.post_last_block_norm.
         self.initial_norm = BolmoRMSNorm(
             self.hidden_size,
-            eps=config.local_rms_norm_eps,
+            config.local_rms_norm_eps,
         )
 
         self.in_projection = nn.Linear(
@@ -828,11 +917,17 @@ class BolmoRotaryEmbedding(nn.Module):
         self.original_max_seq_len = config.max_position_embeddings
 
         self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
+        if TRANSFORMERS_V5 and self.rope_type == "default":
+            self.rope_init_fn = _compute_default_rope_parameters
+        else:
+            self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
         inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.original_inv_freq = self.inv_freq
+
+    # 5.x `_init_weights` looks this up on the rotary module itself.
+    compute_default_rope_parameters = staticmethod(_compute_default_rope_parameters)
 
     @torch.no_grad()
     @dynamic_rope_update  # power user: used with advanced RoPE types (e.g. dynamic rope)
@@ -879,8 +974,9 @@ class BolmoModel(BolmoPreTrainedModel):
         self.layers = nn.ModuleList(
             [BolmoDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
-        self.norm = BolmoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = build_norm(config, config.hidden_size, config.rms_norm_eps)
         self.gradient_checkpointing = False
+        self.has_sliding_layers = "sliding_attention" in (config.layer_types or [])
         self.rotary_embs = nn.ModuleDict(
             {
                 "sliding_attention": BolmoRotaryEmbedding(config=config, rope_type="default"),
@@ -976,22 +1072,32 @@ class BolmoModel(BolmoPreTrainedModel):
             # Prepare mask arguments
             mask_kwargs = {
                 "config": self.config,
-                "input_embeds": h_patch,
+                "input_embeds": h_patch,   # renamed `inputs_embeds` in 5.2.0
+                "inputs_embeds": h_patch,
                 "attention_mask": attention_mask,
-                "cache_position": cache_position,
+                "cache_position": cache_position,  # dropped in 5.9.0
                 "past_key_values": past_key_values,
                 "position_ids": position_ids,
             }
-            # Create the masks
+            # Create the masks. Models whose global blocks are all full attention (OLMo 2,
+            # Llama 3, Qwen 3) have no `sliding_window` to build a sliding mask from.
             causal_mask_mapping = {
-                "full_attention": create_causal_mask(**mask_kwargs),
-                "sliding_attention": create_sliding_window_causal_mask(**mask_kwargs),
+                "full_attention": create_causal_mask(
+                    **{k: v for k, v in mask_kwargs.items() if k in _CAUSAL_MASK_PARAMS}
+                )
             }
+            if self.has_sliding_layers:
+                causal_mask_mapping["sliding_attention"] = create_sliding_window_causal_mask(
+                    **{k: v for k, v in mask_kwargs.items() if k in _SLIDING_MASK_PARAMS}
+                )
 
         position_embeddings_mapping = {
-            "sliding_attention": self.rotary_embs["sliding_attention"](h_byte, position_ids),
             "full_attention": self.rotary_embs["full_attention"](h_byte, position_ids),
         }
+        if self.has_sliding_layers:
+            position_embeddings_mapping["sliding_attention"] = self.rotary_embs[
+                "sliding_attention"
+            ](h_byte, position_ids)
 
         if h_patch.numel() > 0:
             # we need to convert from right-pad to left-pad and back for prefill
@@ -1135,9 +1241,15 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
     ) -> Union[GenerateOutput, torch.Tensor]:
         # generic preprocessing
 
-        generation_config, model_kwargs = self._prepare_generation_config(
-            generation_config, use_model_defaults, **kwargs
-        )
+        # 5.0.0 dropped the positional `use_model_defaults`.
+        if TRANSFORMERS_V5:
+            generation_config, model_kwargs = self._prepare_generation_config(
+                generation_config, **kwargs
+            )
+        else:
+            generation_config, model_kwargs = self._prepare_generation_config(
+                generation_config, use_model_defaults, **kwargs
+            )
         self._prepare_special_tokens(generation_config, device=self.model.device)
 
         logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
@@ -1206,11 +1318,11 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
             device=byte_input_ids.device,  # type: ignore
             model_kwargs=model_kwargs,
         )
-        stopping_criteria = self._get_stopping_criteria(
+        stopping_criteria = [self._get_stopping_criteria(
             generation_config=generation_config,  # type: ignore
-            stopping_criteria=stopping_criteria,
+            stopping_criteria=copy.deepcopy(stopping_criteria),
             tokenizer=self.model.tokenizer,
-        )
+        ) for _ in range(batch_size)]
 
         # output container
         generated = byte_input_ids
@@ -1348,7 +1460,7 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
 
             for i in range(batch_size):
                 # passing `scores` to stopping criteria not implemented
-                if stopping_criteria(torch.tensor(non_boundary_generated_tokens[i], dtype=torch.long).unsqueeze(0), None).squeeze(0).item():  # type: ignore
+                if stopping_criteria[i](torch.tensor(non_boundary_generated_tokens[i], dtype=torch.long).unsqueeze(0), None).squeeze(0).item():  # type: ignore
                     stop_hit[i] = True
 
             finished |= stop_hit

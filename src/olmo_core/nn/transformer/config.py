@@ -1038,6 +1038,132 @@ class TransformerConfig(Config):
         )
 
     @classmethod
+    def qwen3_0_6B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=1024,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 28),
+            n_heads=kwargs.pop("n_heads", 16),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
+            rope_theta=kwargs.pop("rope_theta", 1_000_000),
+            rope_full_precision=kwargs.pop("rope_full_precision", False),
+            layer_norm_eps=1e-6,
+            layer_norm_name=LayerNormType.qwen_rms,
+            qk_norm=kwargs.pop("qk_norm", True),
+            use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
+            feed_forward=FeedForwardConfig(
+                hidden_size=3072, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_1_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=2048,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 28),
+            n_heads=kwargs.pop("n_heads", 16),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
+            rope_theta=kwargs.pop("rope_theta", 1_000_000),
+            rope_full_precision=kwargs.pop("rope_full_precision", False),
+            layer_norm_eps=1e-6,
+            layer_norm_name=LayerNormType.qwen_rms,
+            qk_norm=kwargs.pop("qk_norm", True),
+            use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
+            feed_forward=FeedForwardConfig(
+                hidden_size=6144, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_4B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=2560,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 36),
+            n_heads=kwargs.pop("n_heads", 32),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
+            rope_theta=kwargs.pop("rope_theta", 1_000_000),
+            rope_full_precision=kwargs.pop("rope_full_precision", False),
+            layer_norm_eps=1e-6,
+            layer_norm_name=LayerNormType.qwen_rms,
+            qk_norm=kwargs.pop("qk_norm", True),
+            use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
+            feed_forward=FeedForwardConfig(
+                hidden_size=9728, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_8B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=4096,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 36),
+            n_heads=kwargs.pop("n_heads", 32),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
+            rope_theta=kwargs.pop("rope_theta", 1_000_000),
+            rope_full_precision=kwargs.pop("rope_full_precision", False),
+            layer_norm_eps=1e-6,
+            layer_norm_name=LayerNormType.qwen_rms,
+            qk_norm=kwargs.pop("qk_norm", True),
+            use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
+            feed_forward=FeedForwardConfig(
+                hidden_size=12288, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_14B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=5120,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 48),
+            n_heads=kwargs.pop("n_heads", 40),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
+            rope_theta=kwargs.pop("rope_theta", 1_000_000),
+            rope_full_precision=kwargs.pop("rope_full_precision", False),
+            layer_norm_eps=1e-6,
+            layer_norm_name=LayerNormType.qwen_rms,
+            qk_norm=kwargs.pop("qk_norm", True),
+            use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
+            feed_forward=FeedForwardConfig(
+                hidden_size=17408, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_32B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=5120,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 64),
+            n_heads=kwargs.pop("n_heads", 40),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            head_dim=kwargs.pop("head_dim", 128),
+            rope_theta=kwargs.pop("rope_theta", 1_000_000),
+            rope_full_precision=kwargs.pop("rope_full_precision", False),
+            layer_norm_eps=1e-6,
+            layer_norm_name=LayerNormType.qwen_rms,
+            qk_norm=kwargs.pop("qk_norm", True),
+            use_head_qk_norm=kwargs.pop("use_head_qk_norm", True),
+            feed_forward=FeedForwardConfig(
+                hidden_size=25600, bias=False, dtype=kwargs.get("dtype", DType.float32)
+            ),
+            **kwargs,
+        )
+
+    @classmethod
     def llama_like(
         cls,
         *,
@@ -1046,10 +1172,14 @@ class TransformerConfig(Config):
         n_layers: int,
         n_heads: int,
         n_kv_heads: Optional[int] = None,
+        head_dim: Optional[int] = None,
         qk_norm: bool = False,
+        use_head_qk_norm: bool = False,
         layer_norm_eps: float = 1e-5,
+        layer_norm_name: Optional[LayerNormType] = None,
         rope_theta: int = 500_000,
         rope_type: Optional[RoPEType] = None,
+        rope_full_precision: bool = True,
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
         fused_ops: bool = False,
@@ -1072,6 +1202,9 @@ class TransformerConfig(Config):
         :param hidden_size_multiple_of: Ensure the FFN hidden size is a multiple of this value.
         :param hidden_size_multiplier: Custom multiplier for the FFN hidden size.
         :param fused_ops: Use fused operations where possible.
+        :param layer_norm_name: Override the layer norm implementation. Defaults to
+            :data:`LayerNormType.fused_rms` when ``fused_ops=True``, otherwise
+            :data:`LayerNormType.rms`.
         :param block_mods: A dictionary of block indices to functions that take the base block config and return a modified block config.
         :param dtype: The default data type to use for all parameters.
         """
@@ -1082,8 +1215,10 @@ class TransformerConfig(Config):
         hidden_size = ensure_multiple_of(hidden_size, hidden_size_multiple_of)
 
         # Configure global layer norm.
+        if layer_norm_name is None:
+            layer_norm_name = LayerNormType.fused_rms if fused_ops else LayerNormType.rms
         layer_norm = LayerNormConfig(
-            name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
+            name=layer_norm_name,
             eps=layer_norm_eps,
             bias=False,
             dtype=dtype,
@@ -1108,9 +1243,16 @@ class TransformerConfig(Config):
                 name=att_type,
                 n_heads=n_heads,
                 n_kv_heads=n_kv_heads,
+                head_dim=head_dim,
                 bias=False,
-                rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling),
+                rope=RoPEConfig(
+                    name=rope_type,
+                    theta=rope_theta,
+                    full_precision=rope_full_precision,
+                    scaling=rope_scaling,
+                ),
                 qk_norm=layer_norm if qk_norm else None,
+                use_head_qk_norm=use_head_qk_norm if qk_norm else None,
                 use_flash=use_flash,
                 backend=attn_backend,
                 sliding_window=sliding_window,

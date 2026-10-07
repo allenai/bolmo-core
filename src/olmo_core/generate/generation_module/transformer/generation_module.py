@@ -37,6 +37,7 @@ from olmo_core.generate.sampling import select_next_token
 from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.attention import Attention, AttentionBackendName
+from olmo_core.nn.attention.flash_attn_api import has_flash_attn_2, has_flash_attn_3
 from olmo_core.nn.bolmo.config import BolmoConfig
 from olmo_core.nn.bolmo import utils as bolmo_utils
 import olmo_core.nn.bolmo.utils as bolmo_utils
@@ -157,6 +158,8 @@ class TransformerGenerationModule(GenerationModule):
         profile: bool = False,
         prefill_only: bool = False,
         vocab_size: int = 10_000,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
     ):
         input_ids = torch.randint(
             low=0,
@@ -193,8 +196,12 @@ class TransformerGenerationModule(GenerationModule):
             logits_to_keep=1,
             cache_leftpad=prefill_cache_leftpad,
         )
-        next_token_probs = F.softmax(next_token_logits, dim=-1)
-        next_token = next_token_logits.argmax(-1)
+        next_token = select_next_token(
+            next_token_logits.squeeze(1),
+            do_sample=temperature > 0.0,
+            temperature=temperature,
+            top_p=top_p,
+        ).unsqueeze(1)
 
         torch.cuda.synchronize()
         prefill_time = time.perf_counter() - start_time - cache_prepare_time
@@ -209,7 +216,7 @@ class TransformerGenerationModule(GenerationModule):
                 "cache_prepare_time": cache_prepare_time,
                 "prefill_time": prefill_time,
                 "generate_time": 0.0,
-            }        
+            }
 
         if prof is not None:
             prof.step()
@@ -220,8 +227,12 @@ class TransformerGenerationModule(GenerationModule):
                 next_token.to(self.device),
                 logits_to_keep=1,
             )
-            next_token_probs = F.softmax(next_token_logits, dim=-1)
-            next_token = next_token_probs.argmax(-1)
+            next_token = select_next_token(
+                next_token_logits.squeeze(1),
+                do_sample=temperature > 0.0,
+                temperature=temperature,
+                top_p=top_p,
+            ).unsqueeze(1)
 
             if prof is not None:
                 prof.step()
@@ -535,6 +546,7 @@ class TransformerGenerationModule(GenerationModule):
         load_thread_count: Optional[int] = None,
         dtype: Optional[DType] = None,
         attention_backend: Optional[AttentionBackendName] = None,
+        tokenizer_override: Optional[Any] = None,
         **kwargs,
     ) -> "TransformerGenerationModule":
         """
@@ -597,6 +609,7 @@ class TransformerGenerationModule(GenerationModule):
                 pre_download=pre_download,
                 load_thread_count=load_thread_count,
                 dtype=dtype,
+                original_tokenizer_override=tokenizer_override,
                 **kwargs,
             )
 
@@ -636,6 +649,26 @@ class TransformerGenerationModule(GenerationModule):
             dtype = DType(dtype)
             transformer_config.apply(
                 lambda c: setattr(c, "dtype", dtype) if hasattr(c, "dtype") else None
+            )
+
+        if attention_backend is None and generation_config.use_cache:
+            # The default torch SDPA backend doesn't support KV caching, so when generation
+            # will use the cache we auto-pick a flash-attn backend that does. Callers can
+            # still force `torch` by passing it explicitly.
+            if has_flash_attn_2():
+                attention_backend = AttentionBackendName.flash_2
+            elif has_flash_attn_3():
+                attention_backend = AttentionBackendName.flash_3
+            else:
+                raise OLMoConfigurationError(
+                    "Generation with use_cache=True requires a KV-cache-capable attention "
+                    "backend, but neither flash-attn 2 nor flash-attn 3 is available. "
+                    "Install flash-attn, pass an explicit attention_backend, or set "
+                    "generation_config.use_cache=False."
+                )
+            log_or_print(
+                log,
+                f"Auto-selected attention backend for KV caching: {attention_backend}",
             )
 
         if attention_backend is not None:
@@ -781,7 +814,9 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
         patch_lens = []
         for example_idx in range(input_ids.shape[0]):
             text = self.tokenizer.decode(input_ids[example_idx].tolist())
-            subword_tokens = self.tokenizer.hf_tokenizer.encode(text)
+            # add_special_tokens=False: get_tokens_and_patch_lengths adds the BOS patch itself,
+            # a tokenizer-added BOS (e.g. llama3) would add a spurious second one
+            subword_tokens = self.tokenizer.hf_tokenizer.encode(text, add_special_tokens=False)
             _, example_patch_lens = self.tokenizer.get_tokens_and_patch_lengths(subword_tokens, add_bos=True)
             patch_lens.append(example_patch_lens)
 
@@ -826,6 +861,8 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
         profile: bool = False,
         prefill_only: bool = False,
         vocab_size: int = 256,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
     ):
         self._set_model_mode("eval")
 
@@ -896,8 +933,12 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
             pad_state=zero_mask_state,
             bolmo_config=self.bolmo_config,
         )
-        next_token_probs = F.softmax(next_token_logits, dim=-1)
-        next_token = next_token_logits.argmax(-1)
+        next_token = select_next_token(
+            next_token_logits.squeeze(1),
+            do_sample=temperature > 0.0,
+            temperature=temperature,
+            top_p=top_p,
+        ).unsqueeze(1)
 
         torch.cuda.synchronize()
         prefill_time = time.perf_counter() - start_time - cache_prepare_time
@@ -928,8 +969,12 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
                 pad_state=zero_mask_state,
                 bolmo_config=self.bolmo_config,
             )
-            next_token_probs = F.softmax(next_token_logits, dim=-1)
-            next_token = next_token_probs.argmax(-1)
+            next_token = select_next_token(
+                next_token_logits.squeeze(1),
+                do_sample=temperature > 0.0,
+                temperature=temperature,
+                top_p=top_p,
+            ).unsqueeze(1)
 
             if prof is not None:
                 prof.step()
@@ -1469,7 +1514,11 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
 
         for example_idx in range(generated.shape[0]):
             completion_text = self.tokenizer.decode(generated[example_idx, prompt_len:].tolist())  # type: ignore
-            completion_subword_tokens = self.tokenizer.hf_tokenizer.encode(completion_text)
+            # add_special_tokens=False: some tokenizers (e.g. llama3) prepend BOS on encode,
+            # which would show up as a stray token at the start of every completion
+            completion_subword_tokens = self.tokenizer.hf_tokenizer.encode(
+                completion_text, add_special_tokens=False
+            )
 
             if completions_only:
                 subword_tokens = completion_subword_tokens
@@ -1507,6 +1556,7 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
         pre_download: bool = True,
         load_thread_count: Optional[int] = None,
         dtype: Optional[DType] = None,
+        original_tokenizer_override: Optional[TokenizerConfig] = None,
         **kwargs,
     ) -> "TransformerGenerationModule":
         """
@@ -1603,7 +1653,7 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
 
         generation_module = cls(
             model,
-            cast(ByteTokenizerConfig, tokenizer_config).build(),
+            cast(ByteTokenizerConfig, tokenizer_config).build(original_tokenizer_override=original_tokenizer_override),
             cast(BolmoConfig, bolmo_config),
             generation_config,
             **kwargs

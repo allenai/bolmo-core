@@ -5,19 +5,22 @@ mappings between OLMo Core and Hugging Face, you may change the variables in
 """
 
 from .checkpoint import load_hf_model, save_hf_model
-from .config import get_hf_config
+from .config import get_bolmo_tokenizer_config, get_hf_config
 from .convert import (
     convert_state_from_hf,
     convert_state_to_hf,
     get_converter_from_hf,
     get_converter_to_hf,
+    get_converter_to_hf_for_config,
 )
 
 __all__ = [
     "convert_state_from_hf",
     "convert_state_to_hf",
+    "get_bolmo_tokenizer_config",
     "get_converter_from_hf",
     "get_converter_to_hf",
+    "get_converter_to_hf_for_config",
     "get_hf_config",
     "load_hf_model",
     "save_hf_model",

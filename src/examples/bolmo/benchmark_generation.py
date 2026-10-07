@@ -52,6 +52,8 @@ BATCH_SIZE = int(os.environ.get("BATCH_SIZE", 1))
 N_BATCHES = int(os.environ.get("N_BATCHES", 1))
 PREFILL_ONLY = os.environ.get("PREFILL_ONLY", "0") == "1"
 AVG_BYTES_PER_TOKEN = float(os.environ.get("AVG_BYTES_PER_TOKEN", 4.3))
+TEMPERATURE = float(os.environ.get("TEMPERATURE", 0.0))
+TOP_P = float(os.environ.get("TOP_P", 1.0))
 
 def main(run_name: str, overrides: list[str]):
     save_path = join_path(SAVE_FOLDER, f"{run_name}_generation_benchmark.json")
@@ -243,6 +245,8 @@ def main(run_name: str, overrides: list[str]):
             n_generate=GENERATE_LENGTH,
             profile=PROFILE,
             prefill_only=PREFILL_ONLY,
+            temperature=TEMPERATURE,
+            top_p=TOP_P,
             **generate_kwargs,
         )
         all_timings.append(timings)
